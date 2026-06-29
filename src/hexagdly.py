@@ -340,6 +340,74 @@ class HexBase:
         )
 
 
+# ----------------------------------------------------------------------------
+# Ring sharing (share_neighbors): tie weights by hexagonal ring, like TDSCAN.
+# The hexagdly offset layout has no clean closed-form hex distance, so the ring
+# index of every kernel cell is derived EMPIRICALLY: a single-tap impulse through
+# the conv reveals each cell's physical (row, col) offset, and the ring is the
+# smallest kernel size whose support contains it. Exact, framework-self-consistent.
+# ----------------------------------------------------------------------------
+
+_RING_MAP_CACHE = {}
+
+
+def _tap_offset(n, i, r, c):
+    """Physical (dr, dc) offset of sub-kernel cell (i, r, c) for kernel size n."""
+    g = 6 * n + 11
+    cen = g // 2
+    imp = torch.zeros(1, 1, g, g)
+    imp[0, 0, cen, cen] = 1.0
+    sub_kernels = []
+    for k in range(n + 1):
+        kh = 2 * n + 1 - k
+        kw = 1 if k == 0 else 2
+        a = np.zeros((1, 1, kh, kw), dtype=np.float32)
+        if k == i:
+            a[0, 0, r, c] = 1.0
+        sub_kernels.append(a)
+    layer = Conv2d_CustomKernel(sub_kernels=sub_kernels, stride=1)
+    out = layer(imp).detach().numpy()[0, 0]
+    pos = np.argwhere(np.isclose(out, 1.0))
+    return int(pos[0][0] - cen), int(pos[0][1] - cen)
+
+
+def ring_maps_2d(n):
+    """Return ``(ring_maps, num_rings)`` for kernel size ``n`` (see hexagdly_tf)."""
+    if n in _RING_MAP_CACHE:
+        return _RING_MAP_CACHE[n]
+    support = {}
+    for nn in range(1, n + 1):
+        offs = set()
+        for i in range(nn + 1):
+            rows = 2 * nn + 1 - i
+            cols = 1 if i == 0 else 2
+            for r in range(rows):
+                for c in range(cols):
+                    offs.add(_tap_offset(nn, i, r, c))
+        support[nn] = offs
+
+    def ring_of(off):
+        if off == (0, 0):
+            return 0
+        for nn in range(1, n + 1):
+            if off in support[nn]:
+                return nn
+        raise ValueError(f"offset {off} not within kernel size {n}")
+
+    ring_maps = []
+    for i in range(n + 1):
+        rows = 2 * n + 1 - i
+        cols = 1 if i == 0 else 2
+        m = np.zeros((rows, cols), dtype=np.int64)
+        for r in range(rows):
+            for c in range(cols):
+                m[r, c] = ring_of(_tap_offset(n, i, r, c))
+        ring_maps.append(m)
+    result = (ring_maps, n + 1)
+    _RING_MAP_CACHE[n] = result
+    return result
+
+
 class Conv2d(HexBase, nn.Module):
     r"""Applies a 2D hexagonal convolution`
         
@@ -364,7 +432,8 @@ class Conv2d(HexBase, nn.Module):
         """
 
     def __init__(
-        self, in_channels, out_channels, kernel_size=1, stride=1, bias=True, debug=False
+        self, in_channels, out_channels, kernel_size=1, stride=1, bias=True,
+        debug=False, share_neighbors=False
     ):
         super(Conv2d, self).__init__()
         self.in_channels = in_channels
@@ -373,23 +442,32 @@ class Conv2d(HexBase, nn.Module):
         self.hexbase_stride = stride
         self.debug = debug
         self.bias = bias
+        self.share_neighbors = share_neighbors
         self.dimensions = 2
         self.process = F.conv2d
         self.combine = torch.add
 
-        for i in range(self.hexbase_size + 1):
-            setattr(
-                self,
-                "kernel" + str(i),
-                Parameter(
-                    torch.Tensor(
-                        out_channels,
-                        in_channels,
-                        1 + 2 * self.hexbase_size - i,
-                        1 if i == 0 else 2,
-                    )
-                ),
-            )
+        if share_neighbors:
+            # One weight per hex ring; broadcast to every cell at forward time.
+            self._ring_maps, self.num_rings = ring_maps_2d(self.hexbase_size)
+            self._ring_idx = [torch.as_tensor(m, dtype=torch.long)
+                              for m in self._ring_maps]
+            self.ring_weights = Parameter(
+                torch.Tensor(out_channels, in_channels, self.num_rings))
+        else:
+            for i in range(self.hexbase_size + 1):
+                setattr(
+                    self,
+                    "kernel" + str(i),
+                    Parameter(
+                        torch.Tensor(
+                            out_channels,
+                            in_channels,
+                            1 + 2 * self.hexbase_size - i,
+                            1 if i == 0 else 2,
+                        )
+                    ),
+                )
         if self.bias:
             self.bias_tensor = Parameter(torch.Tensor(out_channels))
             self.kwargs = {"bias": self.bias_tensor}
@@ -398,6 +476,14 @@ class Conv2d(HexBase, nn.Module):
         self.init_parameters(self.debug)
 
     def init_parameters(self, debug):
+        if self.share_neighbors:
+            if debug:
+                nn.init.constant_(self.ring_weights, 1)
+            else:
+                nn.init.kaiming_normal_(self.ring_weights)
+            if self.bias:
+                nn.init.constant_(self.kwargs["bias"], 1.0 if debug else 0.01)
+            return
         if debug:
             for i in range(self.hexbase_size + 1):
                 nn.init.constant_(getattr(self, "kernel" + str(i)), 1)
@@ -409,7 +495,24 @@ class Conv2d(HexBase, nn.Module):
             if self.bias:
                 nn.init.constant_(getattr(self, "kwargs")["bias"], 0.01)
 
+    def _materialize_shared_kernels(self):
+        """kernel{i}[:, :, r, c] = ring_weights[:, :, ring_map[i][r, c]].
+
+        Gathers along the ring axis -> dense (out, in, rows, cols) kernels, so
+        the forward pass is unchanged and gradients flow back into ring_weights
+        (all cells of a ring share one weight), exactly like TDSCAN.
+        """
+        for i in range(self.hexbase_size + 1):
+            idx = self._ring_idx[i].to(self.ring_weights.device)  # (rows, cols)
+            # ring_weights: (out, in, num_rings) -> index_select on last axis,
+            # then reshape to (out, in, rows, cols).
+            flat = torch.index_select(self.ring_weights, 2, idx.reshape(-1))
+            setattr(self, "kernel" + str(i),
+                    flat.reshape(self.out_channels, self.in_channels, *idx.shape))
+
     def forward(self, input):
+        if self.share_neighbors:
+            self._materialize_shared_kernels()
         if self.hexbase_stride == 1:
             return self.operation_with_single_hexbase_stride(input)
         else:
@@ -596,9 +699,13 @@ class Conv3d(HexBase, nn.Module):
         """
 
     def __init__(
-        self, in_channels, out_channels, kernel_size=1, stride=1, bias=True, debug=False
+        self, in_channels, out_channels, kernel_size=1, stride=1, bias=True,
+        debug=False, share_neighbors=False, depth_padding="valid"
     ):
         super(Conv3d, self).__init__()
+        if depth_padding not in ("valid", "same"):
+            raise ValueError("depth_padding must be 'valid' or 'same'.")
+        self.depth_padding = depth_padding
         self.in_channels = in_channels
         self.out_channels = out_channels
         if isinstance(kernel_size, int):
@@ -617,24 +724,34 @@ class Conv3d(HexBase, nn.Module):
             self.depth_stride = stride[0]
         self.debug = debug
         self.bias = bias
+        self.share_neighbors = share_neighbors
         self.dimensions = 3
         self.process = F.conv3d
         self.combine = torch.add
 
-        for i in range(self.hexbase_size + 1):
-            setattr(
-                self,
-                "kernel" + str(i),
-                Parameter(
-                    torch.Tensor(
-                        out_channels,
-                        in_channels,
-                        self.depth_size,
-                        1 + 2 * self.hexbase_size - i,
-                        1 if i == 0 else 2,
-                    )
-                ),
-            )
+        if share_neighbors:
+            # Share over the hex axes only; depth (time) stays independent ->
+            # ring_weights is (out, in, depth, num_rings) (cf. TDSCAN L x rings).
+            self._ring_maps, self.num_rings = ring_maps_2d(self.hexbase_size)
+            self._ring_idx = [torch.as_tensor(m, dtype=torch.long)
+                              for m in self._ring_maps]
+            self.ring_weights = Parameter(
+                torch.Tensor(out_channels, in_channels, self.depth_size, self.num_rings))
+        else:
+            for i in range(self.hexbase_size + 1):
+                setattr(
+                    self,
+                    "kernel" + str(i),
+                    Parameter(
+                        torch.Tensor(
+                            out_channels,
+                            in_channels,
+                            self.depth_size,
+                            1 + 2 * self.hexbase_size - i,
+                            1 if i == 0 else 2,
+                        )
+                    ),
+                )
         if self.bias:
             self.bias_tensor = Parameter(torch.Tensor(out_channels))
             self.kwargs = {"bias": self.bias_tensor}
@@ -644,6 +761,14 @@ class Conv3d(HexBase, nn.Module):
         self.init_parameters(self.debug)
 
     def init_parameters(self, debug):
+        if self.share_neighbors:
+            if debug:
+                nn.init.constant_(self.ring_weights, 1)
+            else:
+                nn.init.kaiming_normal_(self.ring_weights)
+            if self.bias:
+                nn.init.constant_(self.kwargs["bias"], 1.0 if debug else 0.01)
+            return
         if debug:
             for i in range(self.hexbase_size + 1):
                 nn.init.constant_(getattr(self, "kernel" + str(i)), 1)
@@ -655,7 +780,26 @@ class Conv3d(HexBase, nn.Module):
             if self.bias:
                 nn.init.constant_(getattr(self, "kwargs")["bias"], 0.01)
 
+    def _materialize_shared_kernels(self):
+        """kernel{i} = ring_weights gathered along the ring axis into
+        (out, in, depth, rows, cols); depth left independent."""
+        for i in range(self.hexbase_size + 1):
+            idx = self._ring_idx[i].to(self.ring_weights.device)  # (rows, cols)
+            flat = torch.index_select(self.ring_weights, 3, idx.reshape(-1))
+            setattr(self, "kernel" + str(i),
+                    flat.reshape(self.out_channels, self.in_channels,
+                                 self.depth_size, *idx.shape))
+
     def forward(self, input):
+        if self.share_neighbors:
+            self._materialize_shared_kernels()
+        if self.depth_padding == "same":
+            # Symmetric zero-pad the depth axis (NCDHW -> axis 2) so the temporal
+            # kernel is centred and output depth == input depth, like TDSCAN.
+            pad = (self.depth_size - 1) // 2
+            top = pad
+            bot = self.depth_size - 1 - pad
+            input = F.pad(input, [0, 0, 0, 0, top, bot])  # pads last dims; here D
         if self.hexbase_stride == 1:
             return self.operation_with_single_hexbase_stride(input)
         else:
