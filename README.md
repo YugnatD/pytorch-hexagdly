@@ -47,12 +47,27 @@ pip install -e .
 
 ## New Features
 
-### `share_neighbors` — ring-shared kernel weights
+### `share_neighbors` — weight sharing across kernel cells
 
-Available on `Conv2d` and `Conv3d`. When set to `True`, all cells at the same
-hexagonal ring distance share a single weight, reducing the number of learnable
-parameters. Ring 0 is the center pixel; ring *r* covers the 6*r* cells at
-hex-distance *r*. This mirrors the TDSCAN triggering approach.
+Available on `Conv2d` and `Conv3d`. The `share_neighbors` parameter reduces the
+number of learnable parameters by grouping kernel cells that share a single weight.
+Three modes are available, illustrated below for `kernel_size=2` (19 cells total):
+
+| `share_neighbors="ring"` | `share_neighbors="diag"` | `share_neighbors="sym"` |
+|:---:|:---:|:---:|
+| ![ring](figures/share_ring_k2.png) | ![diag](figures/share_diag_k2.png) | ![sym](figures/share_sym_k2.png) |
+| **3 weights** — cells at the same hex distance from center share one weight (concentric rings). | **10 weights** — visually opposite (antipodal) cells share one weight. | **10 weights** — geometrically adjacent 60° pairs share one weight. |
+
+- **`"ring"`**: the most aggressive reduction. All 6 direct neighbours share one weight,
+  all 12 outer cells share another. Mirrors the TDSCAN triggering approach.
+- **`"diag"`**: antipodal symmetry — each cell and its mirror image through the center
+  share a weight. Useful when the kernel should be point-symmetric.
+- **`"sym"`**: 60° adjacent pairs — consecutive neighbours along the kernel boundary
+  share a weight. Useful when the kernel should reflect local rotational symmetry.
+
+For `kernel_size=1` (7 cells): ring=2 weights, diag=4 weights, sym=4 weights.
+For `kernel_size=2` (19 cells): ring=3 weights, diag=10 weights, sym=10 weights.
+Compare to the default `share_neighbors=False` which gives 7 and 19 independent weights.
 
 ```python
 import torch

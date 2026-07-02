@@ -70,7 +70,7 @@ def plot_hextensor(
                     hexagon = RegularPolygon(
                         (x * np.sqrt(3) / 2, -(y + np.mod(x, 2) * 0.5)),
                         6,
-                        0.577349,
+                        radius=0.577349,
                         orientation=np.pi / 6,
                     )
                     intensities[i].append(intensity)

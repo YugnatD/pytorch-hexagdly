@@ -10,7 +10,6 @@ import torch
 import torch.utils.data
 import torch.nn as nn
 import torch.optim as optim
-from torch.autograd import Variable
 import torch.nn.functional as F
 import torch.optim.lr_scheduler as scheduler
 import os
@@ -278,7 +277,7 @@ class toy_dataset:
         indices = np.arange(len(self.shapes) * self.nperclass)
         np.random.shuffle(indices)
         icount = 0
-        for s, label in zip(d, np.arange(len(self.shapes), dtype=np.int)):
+        for s, label in zip(d, np.arange(len(self.shapes), dtype=int)):
             for image in s.image_data:
                 for ic, c in enumerate(image):
                     self.image_data[indices[icount], ic] = c
@@ -339,7 +338,7 @@ class toy_dataset:
             tensor_dataset,
             batch_size=batchsize,
             shuffle=shuffle,
-            num_workers=max(1, os.sysconf("SC_NPROCESSORS_ONLN") // 2),
+            num_workers=max(1, (os.cpu_count() or 2) // 2),
         )
         return dataloader
 
@@ -380,7 +379,6 @@ class model:
             mode="max",
             factor=0.5,
             patience=10,
-            verbose=False,
             threshold=1,
             threshold_mode="abs",
             min_lr=1e-10,
@@ -404,14 +402,15 @@ class model:
                 getattr(self.net, net_phase)()
                 for i, data in enumerate(dataloader, 0):
                     inputs, labels = data
-                    inputs, labels = Variable(inputs).float(), Variable(labels).long()
+                    inputs, labels = inputs.float(), labels.long()
                     if torch.cuda.is_available():
                         inputs, labels = inputs.cuda(), labels.cuda()
-                    optimizer.zero_grad()
                     outputs = self.net(inputs)
                     tloss = criterion(outputs, labels)
-                    tloss.backward()
-                    optimizer.step()
+                    if net_phase == "train":
+                        optimizer.zero_grad()
+                        tloss.backward()
+                        optimizer.step()
                     running_loss += tloss.item()
                     total += outputs.data.size()[0]
                     _, predicted = torch.max(outputs.data, 1)
@@ -459,7 +458,7 @@ class model:
         )
 
     def load(self, filename):
-        self.net.load_state_dict(torch.load(filename))
+        self.net.load_state_dict(torch.load(filename, weights_only=True))
 
     def get_lc(self):
         return (
