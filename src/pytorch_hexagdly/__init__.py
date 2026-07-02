@@ -6,10 +6,10 @@ and from left to right (along tensor index 3) of armchair-edge shape as
 shown below.
  __    __                                 __ __ __ __
 /11\__/31\__  . . .                      |11|21|31|41| . . .
-\__/21\__/41\                            |__|__|__|__| 
+\__/21\__/41\                            |__|__|__|__|
 /12\__/32\__/ . . .        _______|\     |12|22|32|42| . . .
-\__/22\__/42\             |         \    |__|__|__|__| 
-   \__/  \__/             |_______  /     
+\__/22\__/42\             |         \    |__|__|__|__|
+   \__/  \__/             |_______  /
  .  .  .  .  .                    |/       .  .  .  .  .
  .  .  .  .    .                           .  .  .  .    .
  .  .  .  .      .                         .  .  .  .      .
@@ -17,6 +17,18 @@ shown below.
 For more information visit https://github.com/ai4iacts/hexagdly
 
 """
+
+__version__ = "0.1.0"
+
+__all__ = [
+    "Conv2d",
+    "Conv2d_CustomKernel",
+    "Conv3d",
+    "Conv3d_CustomKernel",
+    "MaxPool2d",
+    "MaxPool3d",
+    "ring_maps_2d",
+]
 
 import torch
 import torch.nn as nn
@@ -410,7 +422,7 @@ def ring_maps_2d(n):
 
 class Conv2d(HexBase, nn.Module):
     r"""Applies a 2D hexagonal convolution`
-        
+
         Args:
             in_channels:        int: number of input channels
             out_channels:       int: number of output channels
@@ -422,10 +434,11 @@ class Conv2d(HexBase, nn.Module):
                                     False: weights are initalised with
                                            kaiming normal, bias with 0.01 (default)
                                     True: weights / bias are set to 1.
-            
+            share_neighbors:    bool: tie weights by hexagonal ring (default: False)
+
         Examples::
-        
-        >>> conv2d = hexagdly.Conv2d(1,3,2,1)
+
+        >>> conv2d = pytorch_hexagdly.Conv2d(1,3,2,1)
         >>> input = torch.randn(1, 1, 4, 2)
         >>> output = conv2d(input)
         >>> print(output)
@@ -533,7 +546,7 @@ class Conv2d(HexBase, nn.Module):
 
 class Conv2d_CustomKernel(HexBase, nn.Module):
     r"""Applies a 2D hexagonal convolution with custom kernels`
-        
+
         Args:
             sub_kernels:        list:   list containing sub-kernels as numpy arrays
             stride:             int:    length of strides
@@ -542,9 +555,9 @@ class Conv2d_CustomKernel(HexBase, nn.Module):
             debug:              bool:   If True a kernel of size one with all values
                                         set to 1 will be applied as well as no bias
                                         (default: False)
-            
+
         Examples::
-        
+
         Given in the online repository https://github.com/ai4iacts/hexagdly
         """
 
@@ -669,7 +682,7 @@ class Conv2d_CustomKernel(HexBase, nn.Module):
 
 class Conv3d(HexBase, nn.Module):
     r"""Applies a 3D hexagonal convolution`
-         
+
         Args:
             in_channels:        int: number of input channels
             out_channels:       int: number of output channels
@@ -689,10 +702,13 @@ class Conv3d(HexBase, nn.Module):
                                     False: weights are initalised with
                                            kaiming normal, bias with 0.01 (default)
                                     True: weights / bias are set to 1.
-         
+            share_neighbors:    bool: tie weights by hexagonal ring (default: False)
+            depth_padding:      str: 'valid' (default) or 'same' — 'same' zero-pads
+                                     the depth axis so output depth equals input depth
+
         Examples::
-         
-        >>> conv3d = hexagdly.Conv3d((1,1), (2,2))
+
+        >>> conv3d = pytorch_hexagdly.Conv3d((1,1), (2,2))
         >>> input = torch.randn(1, 1, 6, 5, 4)
         >>> output = conv3d(input)
         >>> print(output)
@@ -820,7 +836,7 @@ class Conv3d(HexBase, nn.Module):
 
 class Conv3d_CustomKernel(HexBase, nn.Module):
     r"""Applies a 3D hexagonal convolution with custom kernels`
-        
+
         Args:
             sub_kernels:        list: list containing sub-kernels as numpy arrays
             stride:             stride:             int, tuple: length of strides
@@ -832,9 +848,9 @@ class Conv3d_CustomKernel(HexBase, nn.Module):
             debug:              bool:   If True a kernel of size one with all values
                                         set to 1 will be applied as well as no bias
                                         (default: False)
-            
+
         Examples::
-        
+
         Given in the online repository https://github.com/ai4iacts/hexagdly
         """
 
@@ -964,15 +980,15 @@ class Conv3d_CustomKernel(HexBase, nn.Module):
 
 class MaxPool2d(HexBase, nn.Module):
     r"""Applies a 2D hexagonal max pooling`
-        
+
         Args:
             kernel_size:        int: number of layers with neighbouring pixels
                                      covered by the pooling kernel
             stride:             int: length of strides
-        
+
         Examples::
-        
-            >>> maxpool2d = hexagdly.MaxPool2d(1,2)
+
+            >>> maxpool2d = pytorch_hexagdly.MaxPool2d(1,2)
             >>> input = torch.randn(1, 1, 4, 2)
             >>> output = maxpool2d(input)
             >>> print(output)
@@ -1006,7 +1022,7 @@ class MaxPool2d(HexBase, nn.Module):
 
 class MaxPool3d(HexBase, nn.Module):
     r"""Applies a 3D hexagonal max pooling`
-         
+
         Args:
             kernel_size:        int, tuple: number of layers with neighbouring pixels
                                             covered by the pooling kernel
@@ -1019,10 +1035,10 @@ class MaxPool3d(HexBase, nn.Module):
                                     tuple of two ints:
                                         1st int: length of strides in depth
                                         2nd int: length of strides in hexagonal base
-         
+
         Examples::
-         
-            >>> maxpool3d = hexagdly.MaxPool3d((1,1), (2,2))
+
+            >>> maxpool3d = pytorch_hexagdly.MaxPool3d((1,1), (2,2))
             >>> input = torch.randn(1, 1, 6, 5, 4)
             >>> output = maxpool3d(input)
             >>> print(output)

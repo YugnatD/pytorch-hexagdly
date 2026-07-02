@@ -1,6 +1,6 @@
 import numpy as np
 import torch
-import hexagdly as hex
+import pytorch_hexagdly as hex
 import pytest
 
 

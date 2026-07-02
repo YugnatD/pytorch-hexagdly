@@ -1,0 +1,65 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pytorch-hexagdly"
+version = "0.1.0"
+description = "Hexagonal convolution and pooling layers for PyTorch — an extended HexagDLy fork"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Tanguy Dietrich" },
+]
+requires-python = ">=3.9"
+keywords = [
+    "pytorch", "torch",
+    "hexagonal", "hexagonal-convolution", "hexagonal-grid",
+    "convolution", "cnn", "deep-learning", "neural-networks",
+    "geometric-deep-learning", "equivariant", "hexagdly",
+    "astroparticle-physics", "iact", "cherenkov",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "torch",
+    "numpy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
+
+[project.urls]
+Homepage = "https://github.com/YugnatD/pytorch-hexagdly"
+Source = "https://github.com/YugnatD/pytorch-hexagdly"
+Issues = "https://github.com/YugnatD/pytorch-hexagdly/issues"
+Changelog = "https://github.com/YugnatD/pytorch-hexagdly/blob/master/CHANGELOG.md"
+"Original (HexagDLy)" = "https://github.com/ai4iacts/hexagdly"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pytorch_hexagdly"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E741",  # ambiguous variable name -- mirrors upstream HexagDLy math-notation variable names
+]
