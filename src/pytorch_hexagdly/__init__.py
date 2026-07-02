@@ -18,7 +18,7 @@ For more information visit https://github.com/ai4iacts/hexagdly
 
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Conv2d",
