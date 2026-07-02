@@ -1,14 +1,12 @@
 import numpy as np
 import torch
+
 import pytorch_hexagdly as hex
-import pytest
 
 
 class TestConv3d(object):
     def get_array(self):
-        return np.array(
-            [[j * 5 + 1 + i for j in range(8)] for i in range(5)], dtype=np.float32
-        )
+        return np.array([[j * 5 + 1 + i for j in range(8)] for i in range(5)], dtype=np.float32)
 
     def get_array_conv2d_size1_stride1(self):
         return np.array(
@@ -111,8 +109,7 @@ class TestConv3d(object):
         array = np.expand_dims(
             np.stack(
                 [
-                    j * channel_dist
-                    + np.stack([i * depth_dist + array for i in range(depth)])
+                    j * channel_dist + np.stack([i * depth_dist + array for i in range(depth)])
                     for j in range(in_channels)
                 ]
             ),
@@ -132,10 +129,7 @@ class TestConv3d(object):
             layer_array = np.sum(
                 np.stack(
                     [
-                        (
-                            channel * channel_dist
-                            + ((dstep * stride_depth) + dsize) * depth_dist
-                        )
+                        (channel * channel_dist + ((dstep * stride_depth) + dsize) * depth_dist)
                         * n_neighbours
                         + conv2d_array
                         for dsize in range(kernel_size_depth)
@@ -149,9 +143,7 @@ class TestConv3d(object):
             elif stride_hex == 3:
                 layer_array = self.get_array_stride_3(layer_array)
             convolved_array.append(layer_array)
-        convolved_array = np.expand_dims(
-            np.expand_dims(np.stack(convolved_array), 0), 0
-        )
+        convolved_array = np.expand_dims(np.expand_dims(np.stack(convolved_array), 0), 0)
         convolved_tensor = torch.FloatTensor(convolved_array) + bias_value
 
         # output tensor of test method

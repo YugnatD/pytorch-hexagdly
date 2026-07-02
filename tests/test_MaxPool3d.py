@@ -1,14 +1,12 @@
 import numpy as np
 import torch
+
 import pytorch_hexagdly as hex
-import pytest
 
 
 class TestMaxPool3d(object):
     def get_array(self):
-        return np.array(
-            [[j * 5 + 1 + i for j in range(8)] for i in range(5)], dtype=np.float32
-        )
+        return np.array([[j * 5 + 1 + i for j in range(8)] for i in range(5)], dtype=np.float32)
 
     def get_array_maxpool2d_size1_stride1(self):
         return np.array(
@@ -82,8 +80,7 @@ class TestMaxPool3d(object):
         array = np.expand_dims(
             np.stack(
                 [
-                    j * channel_dist
-                    + np.stack([i * depth_dist + array for i in range(depth)])
+                    j * channel_dist + np.stack([i * depth_dist + array for i in range(depth)])
                     for j in range(in_channels)
                 ]
             ),
@@ -119,9 +116,7 @@ class TestMaxPool3d(object):
         pooled_tensor = torch.FloatTensor(pooled_array)
 
         # output tensor of test method
-        maxpool3d = hex.MaxPool3d(
-            (kernel_size_depth, kernel_size_hex), (stride_depth, stride_hex)
-        )
+        maxpool3d = hex.MaxPool3d((kernel_size_depth, kernel_size_hex), (stride_depth, stride_hex))
 
         return maxpool3d(tensor), pooled_tensor
 

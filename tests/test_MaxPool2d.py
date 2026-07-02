@@ -1,14 +1,12 @@
 import numpy as np
 import torch
+
 import pytorch_hexagdly as hex
-import pytest
 
 
 class TestMaxPool2d(object):
     def get_array(self):
-        return np.array(
-            [[j * 5 + 1 + i for j in range(8)] for i in range(5)], dtype=np.float32
-        )
+        return np.array([[j * 5 + 1 + i for j in range(8)] for i in range(5)], dtype=np.float32)
 
     def get_array_maxpool2d_size1_stride1(self):
         return np.array(
@@ -69,9 +67,7 @@ class TestMaxPool2d(object):
 
         # input tensor
         array = self.get_array()
-        array = np.expand_dims(
-            np.stack([j * channel_dist + array for j in range(in_channels)]), 0
-        )
+        array = np.expand_dims(np.stack([j * channel_dist + array for j in range(in_channels)]), 0)
         tensor = torch.FloatTensor(array)
 
         # expected output tensor
@@ -84,12 +80,7 @@ class TestMaxPool2d(object):
         elif stride == 3:
             pooled_array = self.get_array_stride_3(pooled_array)
         pooled_array = np.expand_dims(
-            np.stack(
-                [
-                    channel * channel_dist + pooled_array
-                    for channel in range(in_channels)
-                ]
-            ),
+            np.stack([channel * channel_dist + pooled_array for channel in range(in_channels)]),
             0,
         )
         pooled_tensor = torch.FloatTensor(pooled_array)

@@ -1,14 +1,12 @@
 import numpy as np
 import torch
+
 import pytorch_hexagdly as hex
-import pytest
 
 
 class TestConv2d(object):
     def get_array(self):
-        return np.array(
-            [[j * 5 + 1 + i for j in range(8)] for i in range(5)], dtype=np.float32
-        )
+        return np.array([[j * 5 + 1 + i for j in range(8)] for i in range(5)], dtype=np.float32)
 
     def get_array_conv2d_size1_stride1(self):
         return np.array(
@@ -97,9 +95,7 @@ class TestConv2d(object):
 
         # input tensor
         array = self.get_array()
-        array = np.expand_dims(
-            np.stack([j * channel_dist + array for j in range(in_channels)]), 0
-        )
+        array = np.expand_dims(np.stack([j * channel_dist + array for j in range(in_channels)]), 0)
         tensor = torch.FloatTensor(array)
 
         # expected output tensor
@@ -136,9 +132,7 @@ class TestConv2d(object):
         stride = 1
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -148,9 +142,7 @@ class TestConv2d(object):
         stride = 2
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -160,9 +152,7 @@ class TestConv2d(object):
         stride = 3
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -172,9 +162,7 @@ class TestConv2d(object):
         stride = 1
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -184,9 +172,7 @@ class TestConv2d(object):
         stride = 2
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -196,9 +182,7 @@ class TestConv2d(object):
         stride = 3
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -208,9 +192,7 @@ class TestConv2d(object):
         stride = 1
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -220,9 +202,7 @@ class TestConv2d(object):
         stride = 2
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -232,9 +212,7 @@ class TestConv2d(object):
         stride = 3
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -244,9 +222,7 @@ class TestConv2d(object):
         stride = 1
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -256,9 +232,7 @@ class TestConv2d(object):
         stride = 2
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -268,9 +242,7 @@ class TestConv2d(object):
         stride = 3
         bias = False
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -280,9 +252,7 @@ class TestConv2d(object):
         stride = 1
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -292,9 +262,7 @@ class TestConv2d(object):
         stride = 2
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -304,9 +272,7 @@ class TestConv2d(object):
         stride = 3
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -316,9 +282,7 @@ class TestConv2d(object):
         stride = 1
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -328,9 +292,7 @@ class TestConv2d(object):
         stride = 2
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -340,9 +302,7 @@ class TestConv2d(object):
         stride = 3
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -352,9 +312,7 @@ class TestConv2d(object):
         stride = 1
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -364,9 +322,7 @@ class TestConv2d(object):
         stride = 2
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -376,9 +332,7 @@ class TestConv2d(object):
         stride = 3
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -388,9 +342,7 @@ class TestConv2d(object):
         stride = 1
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -400,9 +352,7 @@ class TestConv2d(object):
         stride = 2
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)
 
@@ -412,8 +362,6 @@ class TestConv2d(object):
         stride = 3
         bias = True
 
-        test_ouput, expectation = self.get_tensors(
-            in_channels, kernel_size, stride, bias
-        )
+        test_ouput, expectation = self.get_tensors(in_channels, kernel_size, stride, bias)
 
         assert torch.equal(test_ouput, expectation)

@@ -1,4 +1,4 @@
-"""
+r"""
 This file contains utilities to set up hexagonal convolution and pooling
 kernels in PyTorch. The size of the input is abitrary, whereas the layout
 from top to bottom (along tensor index 2) has to be of zig-zag-edge shape
@@ -30,11 +30,11 @@ __all__ = [
     "ring_maps_2d",
 ]
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.parameter import Parameter
-import numpy as np
 
 
 class HexBase:
@@ -60,19 +60,14 @@ class HexBase:
         # left
         pads[0] = kernel_number
         # right
-        pads[1] = max(
-            0, kernel_number - ((input_size[-1] - 1) % (2 * self.hexbase_stride))
-        )
+        pads[1] = max(0, kernel_number - ((input_size[-1] - 1) % (2 * self.hexbase_stride)))
         # top
         pads[2] = self.hexbase_size - int(kernel_number / 2)
         # bottom
         constraint = (
             input_size[-2]
             - 1
-            - int(
-                (input_size[-2] - 1 - int(self.hexbase_stride / 2))
-                / self.hexbase_stride
-            )
+            - int((input_size[-2] - 1 - int(self.hexbase_stride / 2)) / self.hexbase_stride)
             * self.hexbase_stride
         )
         bottom = (self.hexbase_size - int((kernel_number + 1) / 2)) - constraint
@@ -101,9 +96,7 @@ class HexBase:
         # top
         top_shift = -(kernel_number % 2) if (self.hexbase_stride % 2) == 1 else 0
         top = (
-            (self.hexbase_size - int(kernel_number / 2))
-            + top_shift
-            - int(self.hexbase_stride / 2)
+            (self.hexbase_size - int(kernel_number / 2)) + top_shift - int(self.hexbase_stride / 2)
         )
         if top >= 0:
             pads[2] = top
@@ -116,10 +109,7 @@ class HexBase:
             self.hexbase_size
             - int(kernel_number / 2)
             + bottom_shift
-            - (
-                (input_size[-2] - int(self.hexbase_stride / 2) - 1)
-                % self.hexbase_stride
-            ),
+            - ((input_size[-2] - int(self.hexbase_stride / 2) - 1) % self.hexbase_stride),
         )
 
         return slices, pads
@@ -156,9 +146,9 @@ class HexBase:
 
     # general implementation of an operation with a hexagonal kernel
     def operation_with_arbitrary_stride(self, input):
-        assert (
-            input.size(-2) - (self.hexbase_stride // 2) >= 0
-        ), "Too few rows to apply hex conv with the stide that is set"
+        assert input.size(-2) - (self.hexbase_stride // 2) >= 0, (
+            "Too few rows to apply hex conv with the stide that is set"
+        )
         odd_columns = None
         even_columns = None
 
@@ -184,7 +174,7 @@ class HexBase:
                     getattr(self, "kernel" + str(i)),
                     dilation=self.get_dilation(dilation_base),
                     stride=self.get_stride(),
-                    **self.kwargs
+                    **self.kwargs,
                 )
             else:
                 odd_columns = self.combine(
@@ -209,7 +199,7 @@ class HexBase:
                     getattr(self, "kernel" + str(i)),
                     dilation=self.get_dilation(dilation_base),
                     stride=self.get_stride(),
-                    **self.kwargs
+                    **self.kwargs,
                 )
             else:
                 even_columns = self.combine(
@@ -225,24 +215,14 @@ class HexBase:
                     ),
                 )
 
-        concatenated_columns = torch.cat(
-            (odd_columns, even_columns), 1 + self.dimensions
-        )
+        concatenated_columns = torch.cat((odd_columns, even_columns), 1 + self.dimensions)
 
         n_odd_columns = odd_columns.size(-1)
         n_even_columns = even_columns.size(-1)
         if n_odd_columns == n_even_columns:
-            order = [
-                int(i + x * n_even_columns)
-                for i in range(n_even_columns)
-                for x in range(2)
-            ]
+            order = [int(i + x * n_even_columns) for i in range(n_even_columns) for x in range(2)]
         else:
-            order = [
-                int(i + x * n_odd_columns)
-                for i in range(n_even_columns)
-                for x in range(2)
-            ]
+            order = [int(i + x * n_odd_columns) for i in range(n_even_columns) for x in range(2)]
             order.append(n_even_columns)
 
         return self.get_ordered_output(concatenated_columns, order)
@@ -258,7 +238,7 @@ class HexBase:
             self.get_padded_input(input, [0, 0, self.hexbase_size, self.hexbase_size]),
             self.kernel0,
             stride=(1, 1) if self.dimensions == 2 else (self.depth_stride, 1, 1),
-            **self.kwargs
+            **self.kwargs,
         )
         if self.hexbase_size >= 1:
             odd_kernels_odd_columns = self.process(
@@ -296,9 +276,7 @@ class HexBase:
                             ),
                             getattr(self, "kernel" + str(i)),
                             dilation=self.get_dilation((1, 2 * i)),
-                            stride=(1, 1)
-                            if self.dimensions == 2
-                            else (self.depth_stride, 1, 1),
+                            stride=(1, 1) if self.dimensions == 2 else (self.depth_stride, 1, 1),
                         ),
                     )
                 else:
@@ -306,9 +284,7 @@ class HexBase:
                     odd_kernels_odd_columns = self.combine(
                         odd_kernels_odd_columns,
                         self.process(
-                            self.get_padded_input(
-                                input, [i, i - 1 + columns_mod2, x, x - 1]
-                            ),
+                            self.get_padded_input(input, [i, i - 1 + columns_mod2, x, x - 1]),
                             getattr(self, "kernel" + str(i)),
                             dilation=self.get_dilation((1, 2 * i)),
                             stride=self.get_stride(),
@@ -317,9 +293,7 @@ class HexBase:
                     odd_kernels_even_columns = self.combine(
                         odd_kernels_even_columns,
                         self.process(
-                            self.get_padded_input(
-                                input, [i - 1, i - columns_mod2, x - 1, x]
-                            ),
+                            self.get_padded_input(input, [i - 1, i - columns_mod2, x - 1, x]),
                             getattr(self, "kernel" + str(i)),
                             dilation=self.get_dilation((1, 2 * i)),
                             stride=self.get_stride(),
@@ -333,17 +307,9 @@ class HexBase:
         n_odd_columns = odd_kernels_odd_columns.size(-1)
         n_even_columns = odd_kernels_even_columns.size(-1)
         if n_odd_columns == n_even_columns:
-            order = [
-                int(i + x * n_even_columns)
-                for i in range(n_even_columns)
-                for x in range(2)
-            ]
+            order = [int(i + x * n_even_columns) for i in range(n_even_columns) for x in range(2)]
         else:
-            order = [
-                int(i + x * n_odd_columns)
-                for i in range(n_even_columns)
-                for x in range(2)
-            ]
+            order = [int(i + x * n_odd_columns) for i in range(n_even_columns) for x in range(2)]
             order.append(n_even_columns)
 
         return self.combine(
@@ -388,22 +354,22 @@ def ring_maps_2d(n):
     if n in _RING_MAP_CACHE:
         return _RING_MAP_CACHE[n]
     support = {}
-    for nn in range(1, n + 1):
+    for ks in range(1, n + 1):
         offs = set()
-        for i in range(nn + 1):
-            rows = 2 * nn + 1 - i
+        for i in range(ks + 1):
+            rows = 2 * ks + 1 - i
             cols = 1 if i == 0 else 2
             for r in range(rows):
                 for c in range(cols):
-                    offs.add(_tap_offset(nn, i, r, c))
-        support[nn] = offs
+                    offs.add(_tap_offset(ks, i, r, c))
+        support[ks] = offs
 
     def ring_of(off):
         if off == (0, 0):
             return 0
-        for nn in range(1, n + 1):
-            if off in support[nn]:
-                return nn
+        for ks in range(1, n + 1):
+            if off in support[ks]:
+                return ks
         raise ValueError(f"offset {off} not within kernel size {n}")
 
     ring_maps = []
@@ -423,30 +389,36 @@ def ring_maps_2d(n):
 class Conv2d(HexBase, nn.Module):
     r"""Applies a 2D hexagonal convolution`
 
-        Args:
-            in_channels:        int: number of input channels
-            out_channels:       int: number of output channels
-            kernel_size:        int: number of layers with neighbouring pixels
-                                     covered by the pooling kernel
-            stride:             int: length of strides
-            bias:               bool: add bias if True (default)
-            debug:              bool: switch to debug mode
-                                    False: weights are initalised with
-                                           kaiming normal, bias with 0.01 (default)
-                                    True: weights / bias are set to 1.
-            share_neighbors:    bool: tie weights by hexagonal ring (default: False)
+    Args:
+        in_channels:        int: number of input channels
+        out_channels:       int: number of output channels
+        kernel_size:        int: number of layers with neighbouring pixels
+                                 covered by the pooling kernel
+        stride:             int: length of strides
+        bias:               bool: add bias if True (default)
+        debug:              bool: switch to debug mode
+                                False: weights are initalised with
+                                       kaiming normal, bias with 0.01 (default)
+                                True: weights / bias are set to 1.
+        share_neighbors:    bool: tie weights by hexagonal ring (default: False)
 
-        Examples::
+    Examples::
 
-        >>> conv2d = pytorch_hexagdly.Conv2d(1,3,2,1)
-        >>> input = torch.randn(1, 1, 4, 2)
-        >>> output = conv2d(input)
-        >>> print(output)
-        """
+    >>> conv2d = pytorch_hexagdly.Conv2d(1,3,2,1)
+    >>> input = torch.randn(1, 1, 4, 2)
+    >>> output = conv2d(input)
+    >>> print(output)
+    """
 
     def __init__(
-        self, in_channels, out_channels, kernel_size=1, stride=1, bias=True,
-        debug=False, share_neighbors=False
+        self,
+        in_channels,
+        out_channels,
+        kernel_size=1,
+        stride=1,
+        bias=True,
+        debug=False,
+        share_neighbors=False,
     ):
         super(Conv2d, self).__init__()
         self.in_channels = in_channels
@@ -463,10 +435,8 @@ class Conv2d(HexBase, nn.Module):
         if share_neighbors:
             # One weight per hex ring; broadcast to every cell at forward time.
             self._ring_maps, self.num_rings = ring_maps_2d(self.hexbase_size)
-            self._ring_idx = [torch.as_tensor(m, dtype=torch.long)
-                              for m in self._ring_maps]
-            self.ring_weights = Parameter(
-                torch.Tensor(out_channels, in_channels, self.num_rings))
+            self._ring_idx = [torch.as_tensor(m, dtype=torch.long) for m in self._ring_maps]
+            self.ring_weights = Parameter(torch.Tensor(out_channels, in_channels, self.num_rings))
         else:
             for i in range(self.hexbase_size + 1):
                 setattr(
@@ -520,8 +490,11 @@ class Conv2d(HexBase, nn.Module):
             # ring_weights: (out, in, num_rings) -> index_select on last axis,
             # then reshape to (out, in, rows, cols).
             flat = torch.index_select(self.ring_weights, 2, idx.reshape(-1))
-            setattr(self, "kernel" + str(i),
-                    flat.reshape(self.out_channels, self.in_channels, *idx.shape))
+            setattr(
+                self,
+                "kernel" + str(i),
+                flat.reshape(self.out_channels, self.in_channels, *idx.shape),
+            )
 
     def forward(self, input):
         if self.share_neighbors:
@@ -547,23 +520,21 @@ class Conv2d(HexBase, nn.Module):
 class Conv2d_CustomKernel(HexBase, nn.Module):
     r"""Applies a 2D hexagonal convolution with custom kernels`
 
-        Args:
-            sub_kernels:        list:   list containing sub-kernels as numpy arrays
-            stride:             int:    length of strides
-            bias:               array:  numpy array with biases (default: None)
-            requires_grad:      bool:   trainable parameters if True (default: False)
-            debug:              bool:   If True a kernel of size one with all values
-                                        set to 1 will be applied as well as no bias
-                                        (default: False)
+    Args:
+        sub_kernels:        list:   list containing sub-kernels as numpy arrays
+        stride:             int:    length of strides
+        bias:               array:  numpy array with biases (default: None)
+        requires_grad:      bool:   trainable parameters if True (default: False)
+        debug:              bool:   If True a kernel of size one with all values
+                                    set to 1 will be applied as well as no bias
+                                    (default: False)
 
-        Examples::
+    Examples::
 
-        Given in the online repository https://github.com/ai4iacts/hexagdly
-        """
+    Given in the online repository https://github.com/ai4iacts/hexagdly
+    """
 
-    def __init__(
-        self, sub_kernels=[], stride=1, bias=None, requires_grad=False, debug=False
-    ):
+    def __init__(self, sub_kernels=[], stride=1, bias=None, requires_grad=False, debug=False):
         super(Conv2d_CustomKernel, self).__init__()
         self.sub_kernels = sub_kernels
         self.bias_array = bias
@@ -578,11 +549,7 @@ class Conv2d_CustomKernel(HexBase, nn.Module):
 
     def init_parameters(self, debug):
         if debug or len(self.sub_kernels) == 0:
-            print(
-                "The debug kernel is used for {name}!".format(
-                    name=self.__class__.__name__
-                )
-            )
+            print("The debug kernel is used for {name}!".format(name=self.__class__.__name__))
             self.sub_kernels = [
                 np.array([[[[1], [1], [1]]]]),
                 np.array([[[[1, 1], [1, 1]]]]),
@@ -600,7 +567,7 @@ class Conv2d_CustomKernel(HexBase, nn.Module):
                 ),
             )
 
-        if not debug and not self.bias_array is None:
+        if not debug and self.bias_array is not None:
             self.check_bias()
             self.bias_tensor = Parameter(
                 torch.from_numpy(self.bias_array).type(torch.FloatTensor),
@@ -610,56 +577,48 @@ class Conv2d_CustomKernel(HexBase, nn.Module):
             self.bias = True
         else:
             self.bias = False
-            if not self.bias_array is None:
+            if self.bias_array is not None:
                 print(
-                    "{name}: Bias is not used in debug mode!".format(
-                        name=self.__class__.__name__
-                    )
+                    "{name}: Bias is not used in debug mode!".format(name=self.__class__.__name__)
                 )
 
     def check_sub_kernels(self):
         for i in range(self.hexbase_size + 1):
-            assert (
-                type(self.sub_kernels[i]).__module__ == np.__name__
-            ), "sub-kernels must be given as numpy arrays"
-            assert (
-                len(self.sub_kernels[i].shape) == 4
-            ), "sub-kernels must be of rank 4 for a 2d convolution"
+            assert type(self.sub_kernels[i]).__module__ == np.__name__, (
+                "sub-kernels must be given as numpy arrays"
+            )
+            assert len(self.sub_kernels[i].shape) == 4, (
+                "sub-kernels must be of rank 4 for a 2d convolution"
+            )
             if i == 0:
-                assert (
-                    self.sub_kernels[i].shape[3] == 1
-                ), "first sub-kernel must have only 1 column"
-                assert (
-                    self.sub_kernels[i].shape[2] == 2 * self.hexbase_size + 1
-                ), "first sub-kernel must have 2* (kernel size) + 1 rows"
+                assert self.sub_kernels[i].shape[3] == 1, "first sub-kernel must have only 1 column"
+                assert self.sub_kernels[i].shape[2] == 2 * self.hexbase_size + 1, (
+                    "first sub-kernel must have 2* (kernel size) + 1 rows"
+                )
                 self.out_channels = self.sub_kernels[i].shape[0]
                 self.in_channels = self.sub_kernels[i].shape[1]
             else:
-                assert (
-                    self.sub_kernels[i].shape[3] == 2
-                ), "sub-kernel {}: all but the first sub-kernel must have 2 columns".format(
-                    i
+                assert self.sub_kernels[i].shape[3] == 2, (
+                    "sub-kernel {}: all but the first sub-kernel must have 2 columns".format(i)
                 )
-                assert (
-                    self.sub_kernels[i].shape[2] == 2 * self.hexbase_size + 1 - i
-                ), "{}. sub-kernel must have 2* (kernel size) + 1 - {} rows".format(
-                    i, i
+                assert self.sub_kernels[i].shape[2] == 2 * self.hexbase_size + 1 - i, (
+                    "{}. sub-kernel must have 2* (kernel size) + 1 - {} rows".format(i, i)
                 )
-                assert (
-                    self.sub_kernels[i].shape[0] == self.out_channels
-                ), "sub-kernel {}: out channels are not consistent".format(i)
-                assert (
-                    self.sub_kernels[i].shape[1] == self.in_channels
-                ), "sub-kernel {}: in channels are not consistent".format(i)
+                assert self.sub_kernels[i].shape[0] == self.out_channels, (
+                    "sub-kernel {}: out channels are not consistent".format(i)
+                )
+                assert self.sub_kernels[i].shape[1] == self.in_channels, (
+                    "sub-kernel {}: in channels are not consistent".format(i)
+                )
 
     def check_bias(self):
-        assert (
-            type(self.bias_array).__module__ == np.__name__
-        ), "bias must be given as a numpy array"
+        assert type(self.bias_array).__module__ == np.__name__, (
+            "bias must be given as a numpy array"
+        )
         assert len(self.bias_array.shape) == 1, "bias must be of rank 1"
-        assert (
-            self.bias_array.shape[0] == self.out_channels
-        ), "bias must have length equal to number of out channels"
+        assert self.bias_array.shape[0] == self.out_channels, (
+            "bias must have length equal to number of out channels"
+        )
 
     def forward(self, input):
         if self.hexbase_stride == 1:
@@ -683,40 +642,47 @@ class Conv2d_CustomKernel(HexBase, nn.Module):
 class Conv3d(HexBase, nn.Module):
     r"""Applies a 3D hexagonal convolution`
 
-        Args:
-            in_channels:        int: number of input channels
-            out_channels:       int: number of output channels
-            kernel_size:        int, tuple: number of layers with neighbouring pixels
-                                            covered by the pooling kernel
-                                    int: same number of layers in all dimensions
-                                    tuple of two ints:
-                                        1st int: layers in depth
-                                        2nd int: layers in hexagonal base
-            stride:             int, tuple: length of strides
-                                    int: same lenght of strides in each dimension
-                                    tuple of two ints:
-                                        1st int: length of strides in depth
-                                        2nd int: length of strides in hexagonal base
-            bias:               bool: add bias if True (default)
-            debug:              bool: switch to debug mode
-                                    False: weights are initalised with
-                                           kaiming normal, bias with 0.01 (default)
-                                    True: weights / bias are set to 1.
-            share_neighbors:    bool: tie weights by hexagonal ring (default: False)
-            depth_padding:      str: 'valid' (default) or 'same' — 'same' zero-pads
-                                     the depth axis so output depth equals input depth
+    Args:
+        in_channels:        int: number of input channels
+        out_channels:       int: number of output channels
+        kernel_size:        int, tuple: number of layers with neighbouring pixels
+                                        covered by the pooling kernel
+                                int: same number of layers in all dimensions
+                                tuple of two ints:
+                                    1st int: layers in depth
+                                    2nd int: layers in hexagonal base
+        stride:             int, tuple: length of strides
+                                int: same lenght of strides in each dimension
+                                tuple of two ints:
+                                    1st int: length of strides in depth
+                                    2nd int: length of strides in hexagonal base
+        bias:               bool: add bias if True (default)
+        debug:              bool: switch to debug mode
+                                False: weights are initalised with
+                                       kaiming normal, bias with 0.01 (default)
+                                True: weights / bias are set to 1.
+        share_neighbors:    bool: tie weights by hexagonal ring (default: False)
+        depth_padding:      str: 'valid' (default) or 'same' — 'same' zero-pads
+                                 the depth axis so output depth equals input depth
 
-        Examples::
+    Examples::
 
-        >>> conv3d = pytorch_hexagdly.Conv3d((1,1), (2,2))
-        >>> input = torch.randn(1, 1, 6, 5, 4)
-        >>> output = conv3d(input)
-        >>> print(output)
-        """
+    >>> conv3d = pytorch_hexagdly.Conv3d((1,1), (2,2))
+    >>> input = torch.randn(1, 1, 6, 5, 4)
+    >>> output = conv3d(input)
+    >>> print(output)
+    """
 
     def __init__(
-        self, in_channels, out_channels, kernel_size=1, stride=1, bias=True,
-        debug=False, share_neighbors=False, depth_padding="valid"
+        self,
+        in_channels,
+        out_channels,
+        kernel_size=1,
+        stride=1,
+        bias=True,
+        debug=False,
+        share_neighbors=False,
+        depth_padding="valid",
     ):
         super(Conv3d, self).__init__()
         if depth_padding not in ("valid", "same"):
@@ -749,10 +715,10 @@ class Conv3d(HexBase, nn.Module):
             # Share over the hex axes only; depth (time) stays independent ->
             # ring_weights is (out, in, depth, num_rings) (cf. TDSCAN L x rings).
             self._ring_maps, self.num_rings = ring_maps_2d(self.hexbase_size)
-            self._ring_idx = [torch.as_tensor(m, dtype=torch.long)
-                              for m in self._ring_maps]
+            self._ring_idx = [torch.as_tensor(m, dtype=torch.long) for m in self._ring_maps]
             self.ring_weights = Parameter(
-                torch.Tensor(out_channels, in_channels, self.depth_size, self.num_rings))
+                torch.Tensor(out_channels, in_channels, self.depth_size, self.num_rings)
+            )
         else:
             for i in range(self.hexbase_size + 1):
                 setattr(
@@ -802,9 +768,11 @@ class Conv3d(HexBase, nn.Module):
         for i in range(self.hexbase_size + 1):
             idx = self._ring_idx[i].to(self.ring_weights.device)  # (rows, cols)
             flat = torch.index_select(self.ring_weights, 3, idx.reshape(-1))
-            setattr(self, "kernel" + str(i),
-                    flat.reshape(self.out_channels, self.in_channels,
-                                 self.depth_size, *idx.shape))
+            setattr(
+                self,
+                "kernel" + str(i),
+                flat.reshape(self.out_channels, self.in_channels, self.depth_size, *idx.shape),
+            )
 
     def forward(self, input):
         if self.share_neighbors:
@@ -837,26 +805,24 @@ class Conv3d(HexBase, nn.Module):
 class Conv3d_CustomKernel(HexBase, nn.Module):
     r"""Applies a 3D hexagonal convolution with custom kernels`
 
-        Args:
-            sub_kernels:        list: list containing sub-kernels as numpy arrays
-            stride:             stride:             int, tuple: length of strides
-                                    int: same lenght of strides in each dimension
-                                    tuple of two ints:
-                                        1st int: length of strides in depth
-                                        2nd int: length of strides in hexagonal base
-            requires_grad:      bool:   trainable parameters if True (default: False)
-            debug:              bool:   If True a kernel of size one with all values
-                                        set to 1 will be applied as well as no bias
-                                        (default: False)
+    Args:
+        sub_kernels:        list: list containing sub-kernels as numpy arrays
+        stride:             stride:             int, tuple: length of strides
+                                int: same lenght of strides in each dimension
+                                tuple of two ints:
+                                    1st int: length of strides in depth
+                                    2nd int: length of strides in hexagonal base
+        requires_grad:      bool:   trainable parameters if True (default: False)
+        debug:              bool:   If True a kernel of size one with all values
+                                    set to 1 will be applied as well as no bias
+                                    (default: False)
 
-        Examples::
+    Examples::
 
-        Given in the online repository https://github.com/ai4iacts/hexagdly
-        """
+    Given in the online repository https://github.com/ai4iacts/hexagdly
+    """
 
-    def __init__(
-        self, sub_kernels=[], stride=1, bias=None, requires_grad=False, debug=False
-    ):
+    def __init__(self, sub_kernels=[], stride=1, bias=None, requires_grad=False, debug=False):
         super(Conv3d_CustomKernel, self).__init__()
         self.sub_kernels = sub_kernels
         self.bias_array = bias
@@ -877,11 +843,7 @@ class Conv3d_CustomKernel(HexBase, nn.Module):
 
     def init_parameters(self, debug):
         if debug or len(self.sub_kernels) == 0:
-            print(
-                "The debug kernel is used for {name}!".format(
-                    name=self.__class__.__name__
-                )
-            )
+            print("The debug kernel is used for {name}!".format(name=self.__class__.__name__))
             self.sub_kernels = [
                 np.array([[[[[1], [1], [1]]]]]),
                 np.array([[[[[1, 1], [1, 1]]]]]),
@@ -899,7 +861,7 @@ class Conv3d_CustomKernel(HexBase, nn.Module):
                 ),
             )
 
-        if not debug and not self.bias_array is None:
+        if not debug and self.bias_array is not None:
             self.check_bias()
             self.bias_tensor = Parameter(
                 torch.from_numpy(self.bias_array).type(torch.FloatTensor),
@@ -913,51 +875,45 @@ class Conv3d_CustomKernel(HexBase, nn.Module):
 
     def check_sub_kernels(self):
         for i in range(self.hexbase_size + 1):
-            assert (
-                type(self.sub_kernels[i]).__module__ == np.__name__
-            ), "sub-kernels must be given as numpy arrays"
-            assert (
-                len(self.sub_kernels[i].shape) == 5
-            ), "sub-kernels must be of rank 5 for a 3d convolution"
+            assert type(self.sub_kernels[i]).__module__ == np.__name__, (
+                "sub-kernels must be given as numpy arrays"
+            )
+            assert len(self.sub_kernels[i].shape) == 5, (
+                "sub-kernels must be of rank 5 for a 3d convolution"
+            )
             if i == 0:
-                assert (
-                    self.sub_kernels[i].shape[4] == 1
-                ), "first sub-kernel must have only 1 column"
-                assert (
-                    self.sub_kernels[i].shape[3] == 2 * self.hexbase_size + 1
-                ), "first sub-kernel must have 2* (kernel size) + 1 rows"
+                assert self.sub_kernels[i].shape[4] == 1, "first sub-kernel must have only 1 column"
+                assert self.sub_kernels[i].shape[3] == 2 * self.hexbase_size + 1, (
+                    "first sub-kernel must have 2* (kernel size) + 1 rows"
+                )
                 self.out_channels = self.sub_kernels[i].shape[0]
                 self.in_channels = self.sub_kernels[i].shape[1]
                 self.depth_size = self.sub_kernels[i].shape[2]
             else:
-                assert (
-                    self.sub_kernels[i].shape[4] == 2
-                ), "sub-kernel {}: all but the first sub-kernel must have 2 columns".format(
-                    i
+                assert self.sub_kernels[i].shape[4] == 2, (
+                    "sub-kernel {}: all but the first sub-kernel must have 2 columns".format(i)
                 )
-                assert (
-                    self.sub_kernels[i].shape[3] == 2 * self.hexbase_size + 1 - i
-                ), "{}th sub-kernel must have 2* (kernel size) + 1 - {} rows".format(
-                    i, i
+                assert self.sub_kernels[i].shape[3] == 2 * self.hexbase_size + 1 - i, (
+                    "{}th sub-kernel must have 2* (kernel size) + 1 - {} rows".format(i, i)
                 )
-                assert (
-                    self.sub_kernels[i].shape[0] == self.out_channels
-                ), "sub-kernel {}: out channels are not consistent".format(i)
-                assert (
-                    self.sub_kernels[i].shape[1] == self.in_channels
-                ), "sub-kernel {}: out channels are not consistent".format(i)
-                assert (
-                    self.sub_kernels[i].shape[2] == self.depth_size
-                ), "sub-kernel {}: depths are not consistent".format(i)
+                assert self.sub_kernels[i].shape[0] == self.out_channels, (
+                    "sub-kernel {}: out channels are not consistent".format(i)
+                )
+                assert self.sub_kernels[i].shape[1] == self.in_channels, (
+                    "sub-kernel {}: out channels are not consistent".format(i)
+                )
+                assert self.sub_kernels[i].shape[2] == self.depth_size, (
+                    "sub-kernel {}: depths are not consistent".format(i)
+                )
 
     def check_bias(self):
-        assert (
-            type(self.bias_array).__module__ == np.__name__
-        ), "bias must be given as a numpy array"
+        assert type(self.bias_array).__module__ == np.__name__, (
+            "bias must be given as a numpy array"
+        )
         assert len(self.bias_array.shape) == 1, "bias must be of rank 1"
-        assert (
-            self.bias_array.shape[0] == self.out_channels
-        ), "bias must have length equal to number of out channels"
+        assert self.bias_array.shape[0] == self.out_channels, (
+            "bias must have length equal to number of out channels"
+        )
 
     def forward(self, input):
         if self.hexbase_stride == 1:
@@ -981,18 +937,18 @@ class Conv3d_CustomKernel(HexBase, nn.Module):
 class MaxPool2d(HexBase, nn.Module):
     r"""Applies a 2D hexagonal max pooling`
 
-        Args:
-            kernel_size:        int: number of layers with neighbouring pixels
-                                     covered by the pooling kernel
-            stride:             int: length of strides
+    Args:
+        kernel_size:        int: number of layers with neighbouring pixels
+                                 covered by the pooling kernel
+        stride:             int: length of strides
 
-        Examples::
+    Examples::
 
-            >>> maxpool2d = pytorch_hexagdly.MaxPool2d(1,2)
-            >>> input = torch.randn(1, 1, 4, 2)
-            >>> output = maxpool2d(input)
-            >>> print(output)
-        """
+        >>> maxpool2d = pytorch_hexagdly.MaxPool2d(1,2)
+        >>> input = torch.randn(1, 1, 4, 2)
+        >>> output = maxpool2d(input)
+        >>> print(output)
+    """
 
     def __init__(self, kernel_size=1, stride=1):
         super(MaxPool2d, self).__init__()
@@ -1016,33 +972,33 @@ class MaxPool2d(HexBase, nn.Module):
             return self.operation_with_arbitrary_stride(input)
 
     def __repr__(self):
-        s = "{name}(kernel_size={hexbase_size}" ", stride={hexbase_stride})"
+        s = "{name}(kernel_size={hexbase_size}, stride={hexbase_stride})"
         return s.format(name=self.__class__.__name__, **self.__dict__)
 
 
 class MaxPool3d(HexBase, nn.Module):
     r"""Applies a 3D hexagonal max pooling`
 
-        Args:
-            kernel_size:        int, tuple: number of layers with neighbouring pixels
-                                            covered by the pooling kernel
-                                    int: same number of layers in all dimensions
-                                    tuple of two ints:
-                                        1st int: layers in depth
-                                        2nd int: layers in hexagonal base
-            stride:             int, tuple: length of strides
-                                    int: same lenght of strides in each dimension
-                                    tuple of two ints:
-                                        1st int: length of strides in depth
-                                        2nd int: length of strides in hexagonal base
+    Args:
+        kernel_size:        int, tuple: number of layers with neighbouring pixels
+                                        covered by the pooling kernel
+                                int: same number of layers in all dimensions
+                                tuple of two ints:
+                                    1st int: layers in depth
+                                    2nd int: layers in hexagonal base
+        stride:             int, tuple: length of strides
+                                int: same lenght of strides in each dimension
+                                tuple of two ints:
+                                    1st int: length of strides in depth
+                                    2nd int: length of strides in hexagonal base
 
-        Examples::
+    Examples::
 
-            >>> maxpool3d = pytorch_hexagdly.MaxPool3d((1,1), (2,2))
-            >>> input = torch.randn(1, 1, 6, 5, 4)
-            >>> output = maxpool3d(input)
-            >>> print(output)
-        """
+        >>> maxpool3d = pytorch_hexagdly.MaxPool3d((1,1), (2,2))
+        >>> input = torch.randn(1, 1, 6, 5, 4)
+        >>> output = maxpool3d(input)
+        >>> print(output)
+    """
 
     def __init__(self, kernel_size=1, stride=1):
         super(MaxPool3d, self).__init__()
