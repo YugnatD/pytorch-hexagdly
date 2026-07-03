@@ -18,7 +18,7 @@ For more information visit https://github.com/ai4iacts/hexagdly
 
 """
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 
 __all__ = [
     "Conv2d",
@@ -627,8 +627,8 @@ class Conv2d(HexBase, nn.Module):
                                 False: weights are initalised with
                                        kaiming normal, bias with 0.01 (default)
                                 True: weights / bias are set to 1.
-        share_neighbors:    str or False: weight-sharing mode (default: False).
-                                False:   independent weight per kernel cell.
+        share_neighbors:    str or None: weight-sharing mode (default: None).
+                                None:    independent weight per kernel cell.
                                 "ring":  one weight per hexagonal ring.
                                 "diag":  antipodal cell pairs share a weight.
                                 "sym":   adjacent 60° pairs share a weight.
@@ -649,10 +649,10 @@ class Conv2d(HexBase, nn.Module):
         stride=1,
         bias=True,
         debug=False,
-        share_neighbors=False,
+        share_neighbors=None,
     ):
         super(Conv2d, self).__init__()
-        if share_neighbors is not False and share_neighbors not in SHARE_NEIGHBORS_MODES:
+        if share_neighbors is not None and share_neighbors not in SHARE_NEIGHBORS_MODES:
             raise ValueError(
                 f"share_neighbors must be False or one of {SHARE_NEIGHBORS_MODES}, "
                 f"got {share_neighbors!r}"
@@ -921,8 +921,8 @@ class Conv3d(HexBase, nn.Module):
                                 False: weights are initalised with
                                        kaiming normal, bias with 0.01 (default)
                                 True: weights / bias are set to 1.
-        share_neighbors:    str or False: weight-sharing mode (default: False).
-                                False:   independent weight per kernel cell.
+        share_neighbors:    str or None: weight-sharing mode (default: None).
+                                None:    independent weight per kernel cell.
                                 "ring":  one weight per hexagonal ring.
                                 "diag":  antipodal cell pairs share a weight.
                                 "sym":   adjacent 60° pairs share a weight.
@@ -945,13 +945,13 @@ class Conv3d(HexBase, nn.Module):
         stride=1,
         bias=True,
         debug=False,
-        share_neighbors=False,
+        share_neighbors=None,
         depth_padding="valid",
     ):
         super(Conv3d, self).__init__()
         if depth_padding not in ("valid", "same"):
             raise ValueError("depth_padding must be 'valid' or 'same'.")
-        if share_neighbors is not False and share_neighbors not in SHARE_NEIGHBORS_MODES:
+        if share_neighbors is not None and share_neighbors not in SHARE_NEIGHBORS_MODES:
             raise ValueError(
                 f"share_neighbors must be False or one of {SHARE_NEIGHBORS_MODES}, "
                 f"got {share_neighbors!r}"

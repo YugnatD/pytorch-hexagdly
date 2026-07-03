@@ -67,13 +67,13 @@ Three modes are available, illustrated below for `kernel_size=2` (19 cells total
 
 For `kernel_size=1` (7 cells): ring=2 weights, diag=4 weights, sym=4 weights.
 For `kernel_size=2` (19 cells): ring=3 weights, diag=10 weights, sym=10 weights.
-Compare to the default `share_neighbors=False` which gives 7 and 19 independent weights.
+Compare to the default `share_neighbors=None` which gives 7 and 19 independent weights.
 
 ```python
 import torch
 import pytorch_hexagdly
 
-conv = pytorch_hexagdly.Conv2d(1, 8, kernel_size=2, stride=1, share_neighbors=True)
+conv = pytorch_hexagdly.Conv2d(1, 8, kernel_size=2, stride=1, share_neighbors="ring")
 x = torch.randn(1, 1, 21, 21)
 print(conv(x).shape)
 ```

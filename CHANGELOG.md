@@ -3,6 +3,14 @@
 All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.2] - 2026-07-03
+
+### Changed
+
+- `share_neighbors` default changed from `False` to `None` on `Conv2d` and `Conv3d`.
+  `None` and `False` are both falsy so existing code passing `share_neighbors=False`
+  explicitly continues to work without change.
+
 ## [0.2.1] - 2026-07-03
 
 ### Fixed

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytorch-hexagdly"
-version = "0.2.1"
+version = "0.2.2"
 description = "Hexagonal convolution and pooling layers for PyTorch — an extended HexagDLy fork"
 readme = "README.md"
 license = { file = "LICENSE" }
