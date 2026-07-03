@@ -37,6 +37,7 @@ Shared-weight group assignment per mode (kernel_size=1):
         odd  col: (-1,0)=2,  (0,-1)=2, (0,+1)=1,  (+1,-1)=3,(+1,0)=3, (+1,+1)=1
 """
 
+import pytest
 import torch
 
 import pytorch_hexagdly as ph
@@ -188,9 +189,9 @@ _NOSHARE_OFFSETS = {
 #           [ B ]
 #
 #   even:  .  2  2  2  .        odd:  .  .  2  .  .
-#          2  1  1  1  2              2  1  1  1  2
+#          2  1  1  1  2              2  2  1  2  2
 #          2  1 [0] 1  2              2  1 [0] 1  2
-#          2  2  1  2  2              2  2  1  2  2
+#          2  2  1  2  2              2  1  1  1  2
 #          .  .  2  .  .              .  2  2  2  .
 #
 # fmt: off
@@ -201,9 +202,9 @@ _RING2_NEIGHBORS = {
         (+1,-2):2, (+1,-1):2, (+1, 0):1, (+1,+1):2, (+1,+2):2,
                               (+2, 0):2},
     1: {                      (-2, 0):2,
-        (-1,-2):2, (-1,-1):1, (-1, 0):1, (-1,+1):1, (-1,+2):2,
+        (-1,-2):2, (-1,-1):2, (-1, 0):1, (-1,+1):2, (-1,+2):2,
         ( 0,-2):2, ( 0,-1):1, ( 0, 0):0, ( 0,+1):1, ( 0,+2):2,
-        (+1,-2):2, (+1,-1):2, (+1, 0):1, (+1,+1):2, (+1,+2):2,
+        (+1,-2):2, (+1,-1):1, (+1, 0):1, (+1,+1):1, (+1,+2):2,
                    (+2,-1):2, (+2, 0):2, (+2,+1):2},
 }
 # fmt: on
@@ -221,10 +222,10 @@ _RING2_NEIGHBORS = {
 #           [ E ]
 #
 #   even:  .  3  1  2  .        odd:  .  .  1  .  .
-#          6  8  5  7  4              6  2  5  3  4
-#          9  7 [0] 8  9              9  7 [0] 8  9
-#          4  2  5  3  6              4  8  5  7  6
-#          .  .  1  .  .              .  3  1  2  .
+#          6  8  5  7  4              6  3  5  2  4
+#          9  7 [0] 8  9              9  8 [0] 7  9
+#          4  2  5  3  6              4  7  5  8  6
+#          .  .  1  .  .              .  2  1  3  .
 #
 # fmt: off
 _DIAG2_NEIGHBORS = {
@@ -234,10 +235,10 @@ _DIAG2_NEIGHBORS = {
         (+1,-2):4, (+1,-1):2, (+1, 0):5, (+1,+1):3, (+1,+2):6,
                               (+2, 0):1},
     1: {                      (-2, 0):1,
-        (-1,-2):6, (-1,-1):8, (-1, 0):5, (-1,+1):7, (-1,+2):4,
-        ( 0,-2):9, ( 0,-1):7, ( 0, 0):0, ( 0,+1):8, ( 0,+2):9,
-        (+1,-2):4, (+1,-1):2, (+1, 0):5, (+1,+1):3, (+1,+2):6,
-                   (+2,-1):3, (+2, 0):1, (+2,+1):2},
+        (-1,-2):6, (-1,-1):3, (-1, 0):5, (-1,+1):2, (-1,+2):4,
+        ( 0,-2):9, ( 0,-1):8, ( 0, 0):0, ( 0,+1):7, ( 0,+2):9,
+        (+1,-2):4, (+1,-1):7, (+1, 0):5, (+1,+1):8, (+1,+2):6,
+                   (+2,-1):2, (+2, 0):1, (+2,+1):3},
 }
 # fmt: on
 
@@ -253,10 +254,10 @@ _DIAG2_NEIGHBORS = {
 #           [ D ]
 #
 #   even:  .  9  4  4  .        odd:  .  .  4  .  .
-#          9  3  3  2  5              9  3  3  2  5
-#          8  1 [0] 2  5              8  1 [0] 2  5
-#          8  7  1  6  6              8  7  1  6  6
-#          .  .  7  .  .              .  9  7  4  .
+#          9  3  3  2  5              9  9  3  4  5
+#          8  1 [0] 2  5              8  3 [0] 2  5
+#          8  7  1  6  6              8  1  1  2  6
+#          .  .  7  .  .              .  7  7  6  .
 #
 # fmt: off
 _SYM2_NEIGHBORS = {
@@ -266,10 +267,10 @@ _SYM2_NEIGHBORS = {
         (+1,-2):8, (+1,-1):7, (+1, 0):1, (+1,+1):6, (+1,+2):6,
                               (+2, 0):7},
     1: {                      (-2, 0):4,
-        (-1,-2):9, (-1,-1):3, (-1, 0):3, (-1,+1):2, (-1,+2):5,
-        ( 0,-2):8, ( 0,-1):1, ( 0, 0):0, ( 0,+1):2, ( 0,+2):5,
-        (+1,-2):8, (+1,-1):7, (+1, 0):1, (+1,+1):6, (+1,+2):6,
-                   (+2,-1):9, (+2, 0):7, (+2,+1):4},
+        (-1,-2):9, (-1,-1):9, (-1, 0):3, (-1,+1):4, (-1,+2):5,
+        ( 0,-2):8, ( 0,-1):3, ( 0, 0):0, ( 0,+1):2, ( 0,+2):5,
+        (+1,-2):8, (+1,-1):1, (+1, 0):1, (+1,+1):2, (+1,+2):6,
+                   (+2,-1):7, (+2, 0):7, (+2,+1):6},
 }
 # fmt: on
 
@@ -669,22 +670,24 @@ class TestSymOracle:
 
 
 class TestParityCorrectness:
-    """Verify that both parity maps are materialized simultaneously and used correctly."""
+    """Verify that even/odd column centres read the same physical neighbourhood.
 
-    def test_kernel1_and_kernel1_odd_differ_for_n2(self):
-        conv = ph.Conv2d(1, 1, kernel_size=2, stride=1, bias=False, share_neighbors="diag")
+    For a correct weight-sharing map the two column parities must group the same
+    *physical* hexes together. Because HexagDLy shifts odd columns down by half a
+    cell, that physical invariance is achieved with an *identical* weight map for
+    both parities — the row zig-zag is handled entirely by the slice/stride
+    machinery (the same design kernel_size=1 uses). Hence no separate kernel_i_odd
+    variant is created; asserting the maps are equal is asserting correctness.
+    """
+
+    @pytest.mark.parametrize("mode", ["ring", "diag", "sym"])
+    def test_parity_maps_identical_for_n2(self, mode):
+        conv = ph.Conv2d(1, 1, kernel_size=2, stride=1, bias=False, share_neighbors=mode)
         conv._materialize_shared_kernels()
-        k1_even = conv.kernel1.detach().clone()
-        k1_odd = conv.kernel1_odd.detach().clone()
-        assert not torch.allclose(k1_even, k1_odd), (
-            "kernel1 and kernel1_odd should differ for n=2 diag"
+        # Even and odd maps coincide, so the odd variant is never materialized.
+        assert not hasattr(conv, "kernel1_odd"), (
+            f"{mode} k=2: even/odd maps are identical, no kernel1_odd expected"
         )
-
-    def test_ring_k2_has_odd_variant(self):
-        # ring k=2 maps differ per parity — odd variant must be created
-        conv = ph.Conv2d(1, 1, kernel_size=2, stride=1, bias=False, share_neighbors="ring")
-        conv._materialize_shared_kernels()
-        assert hasattr(conv, "kernel1_odd"), "ring k=2 should create kernel1_odd"
 
     def test_forward_produces_finite_output_even_width(self):
         conv = ph.Conv2d(1, 1, kernel_size=2, stride=1, bias=False, share_neighbors="diag")
@@ -891,3 +894,24 @@ class TestNoShareOracleK2:
             k = getattr(conv, f"kernel{si}")
             assert k.grad is not None
             assert (k.grad.abs() > 0).all(), f"kernel{si} should have non-zero gradients"
+
+
+class TestConv3dShareNeighbors:
+    """Smoke tests: Conv3d shares _HARDCODED_MAPS with Conv2d, so exercise every
+    mode / kernel size on both even- and odd-width inputs (odd width triggers both
+    column parities) to guard against crashes and NaNs in the 3d code path."""
+
+    @pytest.mark.parametrize("mode", ["ring", "diag", "sym"])
+    @pytest.mark.parametrize("k", [1, 2])
+    @pytest.mark.parametrize("width", [16, 17])
+    def test_forward_and_backward(self, mode, k, width):
+        conv = ph.Conv3d(1, 1, kernel_size=(1, k), stride=1, bias=False, share_neighbors=mode)
+        x = torch.randn(2, 1, 4, 13, width)
+        out = conv(x)
+        assert out.isfinite().all(), f"{mode} k={k} width={width}: non-finite output"
+        assert out.shape[0] == 2 and out.shape[-1] == width
+        out.sum().backward()
+        assert conv.shared_weights.grad is not None
+        assert (conv.shared_weights.grad.abs() > 0).any(), (
+            f"{mode} k={k} width={width}: no gradient flowed to shared_weights"
+        )

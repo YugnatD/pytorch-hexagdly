@@ -18,7 +18,7 @@ For more information visit https://github.com/ai4iacts/hexagdly
 
 """
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "Conv2d",
@@ -396,7 +396,7 @@ _HARDCODED_MAPS = {
     ("ring", 2, 1): (
         [
             np.array([[2], [1], [0], [1], [2]]),  # sub0
-            np.array([[1, 1], [1, 1], [2, 2], [2, 2]]),  # sub1 odd
+            np.array([[2, 2], [1, 1], [1, 1], [2, 2]]),  # sub1 odd
             np.array([[2, 2], [2, 2], [2, 2]]),  # sub2
         ],
         3,
@@ -428,7 +428,7 @@ _HARDCODED_MAPS = {
     ("diag", 2, 1): (
         [
             np.array([[1], [5], [0], [5], [1]]),  # sub0
-            np.array([[8, 7], [7, 8], [2, 3], [3, 2]]),  # sub1 odd
+            np.array([[3, 2], [8, 7], [7, 8], [2, 3]]),  # sub1 odd
             np.array([[6, 4], [9, 9], [4, 6]]),  # sub2
         ],
         10,
@@ -464,7 +464,7 @@ _HARDCODED_MAPS = {
     ("sym", 2, 1): (
         [
             np.array([[4], [3], [0], [1], [7]]),  # sub0
-            np.array([[3, 2], [1, 2], [7, 6], [9, 4]]),  # sub1 odd
+            np.array([[9, 4], [3, 2], [1, 2], [7, 6]]),  # sub1 odd
             np.array([[9, 5], [8, 5], [8, 6]]),  # sub2
         ],
         10,

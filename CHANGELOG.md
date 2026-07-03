@@ -3,6 +3,25 @@
 All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.1] - 2026-07-03
+
+### Fixed
+
+- `share_neighbors` with `kernel_size=2`: the odd-column weight-group maps for
+  the `ring`, `diag`, and `sym` modes had their off-axis (`sub1`) rows
+  cyclically rotated, so odd-column centres grouped the wrong physical hexes
+  (e.g. `diag` pairs were no longer 180° antipodes). The odd-column map is now
+  identical to the even-column one — the half-cell column shift is handled by
+  the slice/stride machinery alone, matching the `kernel_size=1` design.
+  Verified against an independent cube-coordinate hex model. Affects both
+  `Conv2d` and `Conv3d`.
+
+### Added
+
+- `Conv3d` smoke tests for every `share_neighbors` mode / kernel size on both
+  even- and odd-width inputs (the 3d + weight-sharing path was previously
+  untested).
+
 ## [0.1.0] - 2026-07-02
 
 Initial release of `pytorch-hexagdly`, a fork of
