@@ -42,6 +42,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest",
+    "hexagdly-oracle @ git+https://github.com/YugnatD/hexagdly-oracle.git@main",
 ]
 
 [project.urls]
