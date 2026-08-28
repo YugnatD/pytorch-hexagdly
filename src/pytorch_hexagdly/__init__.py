@@ -18,7 +18,20 @@ For more information visit https://github.com/ai4iacts/hexagdly
 
 """
 
-__version__ = "0.2.3"
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _version
+
+# Read from the installed package's own metadata (set from pyproject.toml's
+# `version` at build time) rather than a second hardcoded string here -- the
+# Keras port (keras_hexagdly) had exactly this constant drift stale across
+# three releases in a row before switching to the same approach; see its
+# CHANGELOG [0.4.2].
+try:
+    __version__ = _version("pytorch-hexagdly")
+except PackageNotFoundError:
+    # Running from source without an installed/editable package (e.g. a
+    # bare checkout on sys.path with no `pip install`).
+    __version__ = "unknown"
 
 __all__ = [
     "Conv2d",
