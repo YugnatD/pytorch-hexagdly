@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pytorch-hexagdly"
-version = "0.2.2"
+version = "0.2.3"
 description = "Hexagonal convolution and pooling layers for PyTorch — an extended HexagDLy fork"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -51,6 +51,12 @@ Source = "https://github.com/YugnatD/pytorch-hexagdly"
 Issues = "https://github.com/YugnatD/pytorch-hexagdly/issues"
 Changelog = "https://github.com/YugnatD/pytorch-hexagdly/blob/master/CHANGELOG.md"
 "Original (HexagDLy)" = "https://github.com/ai4iacts/hexagdly"
+
+[tool.hatch.metadata]
+# Needed because dev's hexagdly-oracle dependency is a direct git+https
+# reference, not a plain PyPI-resolvable requirement -- hatchling refuses
+# those in optional-dependencies unless explicitly allowed.
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pytorch_hexagdly"]

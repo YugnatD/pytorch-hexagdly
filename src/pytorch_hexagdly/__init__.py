@@ -18,7 +18,7 @@ For more information visit https://github.com/ai4iacts/hexagdly
 
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 __all__ = [
     "Conv2d",
@@ -39,6 +39,39 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 
 SHARE_NEIGHBORS_MODES = ("ring", "diag", "sym")
+
+
+def _combined_fan_in_pool(out_channels, total_fan_in, debug):
+    """Draw one correctly-scaled pool of weight values, to be sliced into a
+    hex conv's several sub-kernel/shared-weight-group pieces.
+
+    A hex convolution splits each output channel's receptive field across
+    several separately-shaped tensors (kernel0, kernel1, ... -- or, with
+    share_neighbors, one shared_weights tensor covering fewer distinct
+    values than physical taps) whose contributions are SUMMED to produce
+    the output. Calling kaiming_normal_ independently on each piece --
+    which used its own (too-small) shape to compute fan_in -- calibrated
+    each piece's variance as if it alone were the entire receptive field,
+    so the summed output ends up with variance inflated by roughly the
+    number of pieces (same bug also present in upstream hexagdly's
+    identical per-sub-kernel kaiming_normal_ calls; fixed independently in
+    keras_hexagdly -- see that port's CHANGELOG [0.4.1] for the full
+    measurement and explanation).
+
+    Since kaiming_normal_ draws i.i.d. elements, a contiguous slice of a
+    pool sized by the TRUE combined fan-in is itself correctly scaled -- so
+    init_parameters draws one (out_channels, total_fan_in) pool here and
+    slices+reshapes pieces off it for each sub-kernel/shared-weights
+    tensor, instead of initializing each piece from its own shape.
+
+    debug=True keeps using all-ones (a pool of ones sliced anywhere is
+    still all 1s, so no special-casing needed there).
+    """
+    if debug:
+        return torch.ones(out_channels, total_fan_in)
+    pool = torch.empty(out_channels, total_fan_in)
+    nn.init.kaiming_normal_(pool)
+    return pool
 
 
 class HexBase:
@@ -706,24 +739,42 @@ class Conv2d(HexBase, nn.Module):
         self.init_parameters(self.debug)
 
     def init_parameters(self, debug):
+        # Total physical taps across kernel0..kernel{hexbase_size} -- the TRUE
+        # combined receptive field whose summed output needs variance-preserving
+        # init. See _combined_fan_in_pool for why this must be combined, not
+        # computed per sub-kernel/shared-weights-group.
+        total_taps = sum(
+            (1 + 2 * self.hexbase_size - i) * (1 if i == 0 else 2)
+            for i in range(self.hexbase_size + 1)
+        )
+        pool = _combined_fan_in_pool(self.out_channels, total_taps * self.in_channels, debug)
+
         if self.share_neighbors:
-            if debug:
-                nn.init.constant_(self.shared_weights, 1)
-            else:
-                nn.init.kaiming_normal_(self.shared_weights)
+            count = self.in_channels * self.num_shared_weights
+            with torch.no_grad():
+                self.shared_weights.copy_(
+                    pool[:, :count].reshape(
+                        self.out_channels, self.in_channels, self.num_shared_weights
+                    )
+                )
             if self.bias:
                 nn.init.constant_(self.kwargs["bias"], 1.0 if debug else 0.01)
             return
-        if debug:
-            for i in range(self.hexbase_size + 1):
-                nn.init.constant_(getattr(self, "kernel" + str(i)), 1)
-            if self.bias:
-                nn.init.constant_(getattr(self, "kwargs")["bias"], 1.0)
-        else:
-            for i in range(self.hexbase_size + 1):
-                nn.init.kaiming_normal_(getattr(self, "kernel" + str(i)))
-            if self.bias:
-                nn.init.constant_(getattr(self, "kwargs")["bias"], 0.01)
+
+        offset = 0
+        for i in range(self.hexbase_size + 1):
+            kh = 1 + 2 * self.hexbase_size - i
+            kw = 1 if i == 0 else 2
+            count = self.in_channels * kh * kw
+            with torch.no_grad():
+                getattr(self, "kernel" + str(i)).copy_(
+                    pool[:, offset : offset + count].reshape(
+                        self.out_channels, self.in_channels, kh, kw
+                    )
+                )
+            offset += count
+        if self.bias:
+            nn.init.constant_(getattr(self, "kwargs")["bias"], 1.0 if debug else 0.01)
 
     def _materialize_shared_kernels(self):
         """Broadcast shared_weights into dense sub-kernels for both column parities.
@@ -1019,24 +1070,43 @@ class Conv3d(HexBase, nn.Module):
         self.init_parameters(self.debug)
 
     def init_parameters(self, debug):
+        # Total physical taps across kernel0..kernel{hexbase_size} (including
+        # the depth axis) -- see Conv2d.init_parameters / _combined_fan_in_pool.
+        total_taps = self.depth_size * sum(
+            (1 + 2 * self.hexbase_size - i) * (1 if i == 0 else 2)
+            for i in range(self.hexbase_size + 1)
+        )
+        pool = _combined_fan_in_pool(self.out_channels, total_taps * self.in_channels, debug)
+
         if self.share_neighbors:
-            if debug:
-                nn.init.constant_(self.shared_weights, 1)
-            else:
-                nn.init.kaiming_normal_(self.shared_weights)
+            count = self.in_channels * self.depth_size * self.num_shared_weights
+            with torch.no_grad():
+                self.shared_weights.copy_(
+                    pool[:, :count].reshape(
+                        self.out_channels,
+                        self.in_channels,
+                        self.depth_size,
+                        self.num_shared_weights,
+                    )
+                )
             if self.bias:
                 nn.init.constant_(self.kwargs["bias"], 1.0 if debug else 0.01)
             return
-        if debug:
-            for i in range(self.hexbase_size + 1):
-                nn.init.constant_(getattr(self, "kernel" + str(i)), 1)
-            if self.bias:
-                nn.init.constant_(getattr(self, "kwargs")["bias"], 1.0)
-        else:
-            for i in range(self.hexbase_size + 1):
-                nn.init.kaiming_normal_(getattr(self, "kernel" + str(i)))
-            if self.bias:
-                nn.init.constant_(getattr(self, "kwargs")["bias"], 0.01)
+
+        offset = 0
+        for i in range(self.hexbase_size + 1):
+            kh = 1 + 2 * self.hexbase_size - i
+            kw = 1 if i == 0 else 2
+            count = self.in_channels * self.depth_size * kh * kw
+            with torch.no_grad():
+                getattr(self, "kernel" + str(i)).copy_(
+                    pool[:, offset : offset + count].reshape(
+                        self.out_channels, self.in_channels, self.depth_size, kh, kw
+                    )
+                )
+            offset += count
+        if self.bias:
+            nn.init.constant_(getattr(self, "kwargs")["bias"], 1.0 if debug else 0.01)
 
     def _materialize_shared_kernels(self):
         """Broadcast shared_weights into dense sub-kernels; depth axis left independent.

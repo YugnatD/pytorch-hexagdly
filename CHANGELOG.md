@@ -3,6 +3,42 @@
 All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.2.3] - 2026-08-28
+
+### Fixed
+
+- **`Conv2d`/`Conv3d`'s default (Kaiming-normal) weight initialization was
+  scaled too large, and grew larger with `kernel_size`.** Both layers split
+  each output channel's receptive field across several separately-shaped
+  sub-kernel tensors (`kernel0`, `kernel1`, ... -- or, with
+  `share_neighbors`, one `shared_weights` tensor covering fewer distinct
+  values than physical taps) whose contributions are *summed* to produce
+  the output. Calling `nn.init.kaiming_normal_()` on each piece
+  independently -- as this package originally did, matching upstream
+  `hexagdly`'s identical per-sub-kernel `kaiming_normal_()` calls --
+  calibrates each piece's variance as if it alone were the entire
+  receptive field. The summed output ends up with variance inflated by
+  roughly the number of sub-kernels: measured output std for a single
+  untrained layer, on unit-variance input, held steady near the correct
+  Kaiming target of `sqrt(2)` after the fix (1.30-1.48 across
+  `kernel_size` 1-3 and both plain and `share_neighbors` modes), where it
+  previously grew with kernel size.
+  - This is a real, upstream-inherited bug, not a deliberate design choice
+    -- `Conv2d_CustomKernel`/`Conv3d_CustomKernel` are unaffected (they
+    require explicit caller-supplied `sub_kernels`, no default init path).
+    The same bug (and the same fix) was found and applied independently in
+    the Keras port, `keras_hexagdly` 0.4.1 -- see its CHANGELOG.
+  - Fixed by initializing from one pool sized by the *combined* fan-in
+    across all of a layer's sub-kernels/shared-weight groups, then
+    slicing pieces off it -- see `_combined_fan_in_pool` in `__init__.py`.
+    `debug=True` (all-ones init) is unaffected.
+  - Verified against the shared `hexagdly-oracle` test suite (878 passed,
+    7 skipped, 0 failed) -- unchanged from before the fix, since it only
+    changes initial weight *values*, not the convolution math or weight
+    *shapes*.
+  - No change to saved/loaded model weights, since a trained checkpoint's
+    weight values come from training, not the initializer.
+
 ## [0.2.2] - 2026-07-03
 
 ### Changed
