@@ -3,6 +3,42 @@
 All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [0.3.0] - 2026-10-05
+
+### Added
+
+- **`AvgPool2d`**: hexagonal average pooling, with the same window and the
+  same `kernel_size` / `stride` arguments as `MaxPool2d`. Each output cell is
+  the mean over the cells of its window that lie inside the grid: positions
+  past the border count in neither the sum nor the divisor (like
+  `nn.AvgPool2d(..., count_include_pad=False)`), so a constant image stays
+  constant up to the border. Same semantics as `keras_hexagdly.AvgPool2d`
+  (keras-hexagdly 0.5.0), and checked against the same oracle mean in
+  `hexagdly-oracle`'s `tests/test_layers.py` for both ports.
+- **`padding` argument on `Conv2d`, `MaxPool2d` and `AvgPool2d`**, so calls
+  written for `nn.Conv2d` / `nn.MaxPool2d` / `nn.AvgPool2d` (for example
+  `padding=kernel_size // 2`) build the hex layers unchanged. The hex grid is
+  always padded so that every cell is a window centre: `"same"` (the
+  default) and non-negative integer paddings are accepted and change
+  nothing, and `"valid"` raises a `ValueError` instead of being silently
+  ignored. Appended after the existing arguments, so positional calls keep
+  their meaning.
+
+### Fixed
+
+- **`Conv2d`, `Conv3d`, `MaxPool2d` (and `MaxPool3d`) crashed on grids no
+  wider than the stride**, and on single-column grids at stride 1. The
+  even-column group of the output is empty there, and computing it anyway
+  ran a convolution or pooling on a zero-width input. It is now skipped in
+  both stride paths. Inherited from upstream HexagDLy, which fails the same
+  way; the same fix as keras-hexagdly 0.5.0.
+- **`torch.save(model)` failed on any model containing `MaxPool2d` or
+  `MaxPool3d`** (`AttributeError: Can't pickle local object
+  'boolean_dispatch.<locals>.fn'`). The layers stored `F.max_pool2d/3d`
+  directly, and those are locally defined dispatch functions that can't be
+  pickled. They now go through a module-level wrapper. Saving a
+  `state_dict` was never affected.
+
 ## [0.2.3] - 2026-08-28
 
 ### Fixed

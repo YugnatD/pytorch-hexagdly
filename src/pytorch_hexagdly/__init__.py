@@ -34,6 +34,7 @@ except PackageNotFoundError:
     __version__ = "unknown"
 
 __all__ = [
+    "AvgPool2d",
     "Conv2d",
     "Conv2d_CustomKernel",
     "Conv3d",
@@ -52,6 +53,28 @@ import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 
 SHARE_NEIGHBORS_MODES = ("ring", "diag", "sym")
+
+
+def _check_padding(padding):
+    """Validate the ``padding`` argument of the 2D layers and return it.
+
+    The hex layers always pad the grid themselves, so every input cell is a
+    window centre at stride 1 (what ``torch.nn`` calls ``"same"``). ``padding``
+    is accepted so calls written for ``torch.nn.Conv2d`` / ``MaxPool2d`` /
+    ``AvgPool2d`` work unchanged: ``"same"`` and integer paddings, such as the
+    usual ``padding=kernel_size // 2``, are accepted and change nothing.
+    ``"valid"`` asks for a different output grid, which the hex layers can't
+    produce, so it is rejected rather than ignored.
+    """
+    if padding == "same":
+        return padding
+    ints = padding if isinstance(padding, tuple) else (padding,)
+    if all(isinstance(p, int) and not isinstance(p, bool) and p >= 0 for p in ints):
+        return padding
+    raise ValueError(
+        f"padding must be 'same' or non-negative integers, got {padding!r}. The hex grid is "
+        "always padded so that every cell is a window centre; 'valid' isn't supported."
+    )
 
 
 def _combined_fan_in_pool(out_channels, total_fan_in, debug):
@@ -213,6 +236,11 @@ class HexBase:
         )
         odd_columns = None
         even_columns = None
+        # With no more columns than the stride, the even-column group of the
+        # output is empty and the odd group is the whole output. Computing the
+        # empty group anyway runs an op on a zero-width input, which fails (as
+        # it does in upstream HexagDLy), so it is skipped.
+        has_even_columns = input.size(-1) > self.hexbase_stride
 
         for i in range(self.hexbase_size + 1):
             dilation_base = (1, 1) if i == 0 else (1, 2 * i)
@@ -257,6 +285,8 @@ class HexBase:
                     ),
                 )
 
+            if not has_even_columns:
+                continue
             if even_columns is None:
                 even_columns = self.process(
                     self.get_padded_input(
@@ -282,6 +312,9 @@ class HexBase:
                     ),
                 )
 
+        if not has_even_columns:
+            return odd_columns
+
         concatenated_columns = torch.cat((odd_columns, even_columns), 1 + self.dimensions)
 
         n_odd_columns = odd_columns.size(-1)
@@ -297,6 +330,10 @@ class HexBase:
     # a slightly faster, case specific implementation of the hexagonal convolution
     def operation_with_single_hexbase_stride(self, input):
         columns_mod2 = input.size(-1) % 2
+        # A single-column grid has no even columns, so the odd-kernel
+        # even-column group is empty -- skipped for the same reason as in
+        # operation_with_arbitrary_stride.
+        has_even_columns = input.size(-1) > 1
         odd_kernels_odd_columns = []
         odd_kernels_even_columns = []
         even_kernels_all_columns = []
@@ -318,15 +355,16 @@ class HexBase:
                 dilation=self.get_dilation((1, 2)),
                 stride=self.get_stride(),
             )
-            odd_kernels_even_columns = self.process(
-                self.get_padded_input(
-                    input,
-                    [0, 1 - columns_mod2, self.hexbase_size - 1, self.hexbase_size],
-                ),
-                self._odd_col_kernel(1),
-                dilation=self.get_dilation((1, 2)),
-                stride=self.get_stride(),
-            )
+            if has_even_columns:
+                odd_kernels_even_columns = self.process(
+                    self.get_padded_input(
+                        input,
+                        [0, 1 - columns_mod2, self.hexbase_size - 1, self.hexbase_size],
+                    ),
+                    self._odd_col_kernel(1),
+                    dilation=self.get_dilation((1, 2)),
+                    stride=self.get_stride(),
+                )
 
         if self.hexbase_size > 1:
             for i in range(2, self.hexbase_size + 1):
@@ -359,15 +397,19 @@ class HexBase:
                             stride=self.get_stride(),
                         ),
                     )
-                    odd_kernels_even_columns = self.combine(
-                        odd_kernels_even_columns,
-                        self.process(
-                            self.get_padded_input(input, [i - 1, i - columns_mod2, x - 1, x]),
-                            self._odd_col_kernel(i),
-                            dilation=self.get_dilation((1, 2 * i)),
-                            stride=self.get_stride(),
-                        ),
-                    )
+                    if has_even_columns:
+                        odd_kernels_even_columns = self.combine(
+                            odd_kernels_even_columns,
+                            self.process(
+                                self.get_padded_input(input, [i - 1, i - columns_mod2, x - 1, x]),
+                                self._odd_col_kernel(i),
+                                dilation=self.get_dilation((1, 2 * i)),
+                                stride=self.get_stride(),
+                            ),
+                        )
+
+        if not has_even_columns:
+            return self.combine(even_kernels_all_columns, odd_kernels_odd_columns)
 
         odd_kernels_concatenated_columns = torch.cat(
             (odd_kernels_odd_columns, odd_kernels_even_columns), 1 + self.dimensions
@@ -678,6 +720,10 @@ class Conv2d(HexBase, nn.Module):
                                 "ring":  one weight per hexagonal ring.
                                 "diag":  antipodal cell pairs share a weight.
                                 "sym":   adjacent 60° pairs share a weight.
+        padding:            str or int: 'same' (default) or a non-negative int,
+                                 accepted for torch.nn.Conv2d compatibility.
+                                 The hex grid is always padded the same way,
+                                 whatever the value; 'valid' raises.
 
     Examples::
 
@@ -696,6 +742,7 @@ class Conv2d(HexBase, nn.Module):
         bias=True,
         debug=False,
         share_neighbors=None,
+        padding="same",
     ):
         super(Conv2d, self).__init__()
         if share_neighbors is not None and share_neighbors not in SHARE_NEIGHBORS_MODES:
@@ -703,6 +750,7 @@ class Conv2d(HexBase, nn.Module):
                 f"share_neighbors must be False or one of {SHARE_NEIGHBORS_MODES}, "
                 f"got {share_neighbors!r}"
             )
+        self.padding = _check_padding(padding)
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.hexbase_size = kernel_size
@@ -1308,6 +1356,21 @@ class Conv3d_CustomKernel(HexBase, nn.Module):
         return s.format(name=self.__class__.__name__, **self.__dict__)
 
 
+def _max_pool2d(*args, **kwargs):
+    """F.max_pool2d, behind a module-level name.
+
+    F.max_pool2d/3d are locally defined dispatch functions, so a layer that
+    stores one of them directly as an attribute can't be pickled, and
+    torch.save(model) fails.
+    """
+    return F.max_pool2d(*args, **kwargs)
+
+
+def _max_pool3d(*args, **kwargs):
+    """F.max_pool3d, behind a module-level name -- see _max_pool2d."""
+    return F.max_pool3d(*args, **kwargs)
+
+
 class MaxPool2d(HexBase, nn.Module):
     r"""Applies a 2D hexagonal max pooling`
 
@@ -1315,6 +1378,10 @@ class MaxPool2d(HexBase, nn.Module):
         kernel_size:        int: number of layers with neighbouring pixels
                                  covered by the pooling kernel
         stride:             int: length of strides
+        padding:            str or int: 'same' (default) or a non-negative int,
+                                 accepted for torch.nn.MaxPool2d compatibility.
+                                 The hex grid is always padded the same way,
+                                 whatever the value; 'valid' raises.
 
     Examples::
 
@@ -1324,12 +1391,13 @@ class MaxPool2d(HexBase, nn.Module):
         >>> print(output)
     """
 
-    def __init__(self, kernel_size=1, stride=1):
+    def __init__(self, kernel_size=1, stride=1, padding="same"):
         super(MaxPool2d, self).__init__()
+        self.padding = _check_padding(padding)
         self.hexbase_size = kernel_size
         self.hexbase_stride = stride
         self.dimensions = 2
-        self.process = F.max_pool2d
+        self.process = _max_pool2d
         self.combine = torch.max
 
         for i in range(self.hexbase_size + 1):
@@ -1344,6 +1412,80 @@ class MaxPool2d(HexBase, nn.Module):
             return self.operation_with_single_hexbase_stride(input)
         else:
             return self.operation_with_arbitrary_stride(input)
+
+    def __repr__(self):
+        s = "{name}(kernel_size={hexbase_size}, stride={hexbase_stride})"
+        return s.format(name=self.__class__.__name__, **self.__dict__)
+
+
+def _sum_pool2d(input, window, dilation=1, stride=1):
+    """Sum of each window, per channel -- the sum counterpart of F.max_pool2d.
+
+    F.avg_pool2d can't dilate, and the hex sub-kernels are dilated, so this is
+    a depthwise convolution with an all-ones kernel instead.
+    """
+    channels = input.size(1)
+    ones = input.new_ones(channels, 1, *window)
+    return F.conv2d(input, ones, dilation=dilation, stride=stride, groups=channels)
+
+
+class AvgPool2d(HexBase, nn.Module):
+    r"""Applies a 2D hexagonal average pooling`
+
+    Each output cell is the mean over the cells of its hexagonal window (the
+    same window as :class:`MaxPool2d`) that lie inside the grid. Positions past
+    the grid border count in neither the sum nor the divisor, like
+    ``torch.nn.AvgPool2d(..., count_include_pad=False)``. Cells inside the grid
+    always count, including empty (zero) ones such as the cells around a mapped
+    camera image -- the same convention :class:`Conv2d` and :class:`MaxPool2d`
+    apply to them. This matches ``keras_hexagdly.AvgPool2d``.
+
+    Args:
+        kernel_size:        int: number of layers with neighbouring pixels
+                                 covered by the pooling kernel
+        stride:             int: length of strides
+        padding:            str or int: 'same' (default) or a non-negative int,
+                                 accepted for torch.nn.AvgPool2d compatibility.
+                                 The hex grid is always padded the same way,
+                                 whatever the value; 'valid' raises.
+
+    Examples::
+
+        >>> avgpool2d = pytorch_hexagdly.AvgPool2d(1,2)
+        >>> input = torch.randn(1, 1, 4, 2)
+        >>> output = avgpool2d(input)
+        >>> print(output)
+    """
+
+    def __init__(self, kernel_size=1, stride=1, padding="same"):
+        super(AvgPool2d, self).__init__()
+        self.padding = _check_padding(padding)
+        self.hexbase_size = kernel_size
+        self.hexbase_stride = stride
+        self.dimensions = 2
+        self.process = _sum_pool2d
+        self.combine = torch.add
+
+        for i in range(self.hexbase_size + 1):
+            setattr(
+                self,
+                "kernel" + str(i),
+                (1 + 2 * self.hexbase_size - i, 1 if i == 0 else 2),
+            )
+
+    def _window_sum(self, input):
+        if self.hexbase_stride == 1:
+            return self.operation_with_single_hexbase_stride(input)
+        else:
+            return self.operation_with_arbitrary_stride(input)
+
+    def forward(self, input):
+        # Summing a tensor of ones over the same windows counts the in-grid
+        # cells of each window, since the hex padding is zeros. The window
+        # centre is always in the grid, so the count is never zero.
+        total = self._window_sum(input)
+        count = self._window_sum(torch.ones_like(input[:, :1]))
+        return total / count
 
     def __repr__(self):
         s = "{name}(kernel_size={hexbase_size}, stride={hexbase_stride})"
@@ -1391,7 +1533,7 @@ class MaxPool3d(HexBase, nn.Module):
             self.hexbase_stride = stride[1]
             self.depth_stride = stride[0]
         self.dimensions = 3
-        self.process = F.max_pool3d
+        self.process = _max_pool3d
         self.combine = torch.max
 
         for i in range(self.hexbase_size + 1):

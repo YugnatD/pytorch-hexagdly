@@ -2,8 +2,10 @@
 
 `pytorch-hexagdly` is a fork of [HexagDLy](https://github.com/ai4iacts/hexagdly)
 that extends the original hexagonal convolution and pooling layers for PyTorch with
-two new features: **ring-shared weights** (`share_neighbors`) and **depth-axis same-padding**
-(`depth_padding="same"` on `Conv3d`).
+**ring-shared weights** (`share_neighbors`), **depth-axis same-padding**
+(`depth_padding="same"` on `Conv3d`), **hexagonal average pooling** (`AvgPool2d`), and
+`torch.nn`-compatible arguments, so the hex layers can replace `nn.Conv2d` / `nn.MaxPool2d` /
+`nn.AvgPool2d` in an existing model.
 
 - [Getting Started](#getting-started)
 - [New Features](#new-features)
@@ -89,6 +91,35 @@ conv3d = pytorch_hexagdly.Conv3d(1, 4, kernel_size=(3, 1), stride=1,
 x = torch.randn(1, 1, 10, 21, 21)
 print(conv3d(x).shape)  # depth dimension preserved
 ```
+
+### `AvgPool2d` — hexagonal average pooling
+
+Each output cell is the mean over its hexagonal window (the same window as `MaxPool2d`).
+Cells past the grid border count in neither the sum nor the divisor, like
+`nn.AvgPool2d(..., count_include_pad=False)`, so a constant image stays constant up to the
+border. Matches `keras_hexagdly.AvgPool2d`.
+
+```python
+pool = pytorch_hexagdly.AvgPool2d(kernel_size=1, stride=2)
+x = torch.randn(1, 4, 21, 21)
+print(pool(x).shape)
+```
+
+### Drop-in replacement for the `torch.nn` layers
+
+`Conv2d`, `MaxPool2d` and `AvgPool2d` also accept `padding`, so a model can switch between
+the square and the hex layer classes and build both from the same keyword arguments:
+
+```python
+Conv, Pool = (pytorch_hexagdly.Conv2d, pytorch_hexagdly.MaxPool2d) if hex_grid else (nn.Conv2d, nn.MaxPool2d)
+x = Conv(4, 8, kernel_size=3, stride=1, padding=1)(x)
+x = Pool(kernel_size=2, stride=2, padding=0)(x)
+```
+
+The hex grid is always padded so that every cell is a window centre, whatever the
+`padding` value: `"same"` (the default) and integer paddings are accepted and change
+nothing, and `"valid"` raises. Note that `kernel_size` counts hexagonal rings, not
+pixels: `kernel_size=1` is a cell and its 6 neighbours.
 
 
 ## How to use pytorch-hexagdly
