@@ -23,6 +23,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   nothing, and `"valid"` raises a `ValueError` instead of being silently
   ignored. Appended after the existing arguments, so positional calls keep
   their meaning.
+- **`kernel_size` and `stride` are checked when a layer is built.** A
+  non-positive or non-integer value (or a `Conv3d`/`MaxPool3d` pair that
+  isn't a 2-tuple) now raises a `ValueError` right away, instead of being
+  accepted and failing at the first forward pass with an unrelated-looking
+  `ZeroDivisionError` or `TypeError`. Same checks as keras_hexagdly.
+- **`share_neighbors=True`** now means `"ring"`, as in keras_hexagdly.
 
 ### Fixed
 
@@ -38,6 +44,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   directly, and those are locally defined dispatch functions that can't be
   pickled. They now go through a module-level wrapper. Saving a
   `state_dict` was never affected.
+- **A strided layer reused on another grid size crashed or misindexed.**
+  With `stride > 1`, the slices and paddings of each sub-kernel were
+  computed on the first call only and reused for every later input, whatever
+  its height and width. They are now recomputed whenever the grid size
+  changes, as keras_hexagdly already does. A model always fed the same image
+  size, as in training, was not affected.
+- **`share_neighbors=False` raised a `ValueError`** ("must be False or one
+  of ..., got False"), although 0.2.2 documented it as still working. It now
+  means off, like `None`.
 
 ## [0.2.3] - 2026-08-28
 

@@ -3,7 +3,8 @@
 Conv2d, MaxPool2d and AvgPool2d accept ``padding`` like ``torch.nn.Conv2d`` /
 ``MaxPool2d`` / ``AvgPool2d``, so a model can pick either family of layers and
 build them from one set of keyword arguments. Also covers grids no wider
-than the stride, and saving models with torch.save. See CHANGELOG.md [0.3.0].
+than the stride, saving models with torch.save, reusing a layer on another
+grid size, and argument checking. See CHANGELOG.md [0.3.0].
 
 AvgPool2d's values are checked against the oracle mean in hexagdly-oracle's
 tests/test_avgpool2d.py; the checks here need no oracle.
@@ -232,3 +233,89 @@ def test_state_dict_round_trip(x):
     restored = _hex_model()
     restored.load_state_dict(model.state_dict())
     assert torch.equal(restored(x), model(x))
+
+
+# ---- reusing a layer on another grid size ---------------------------------------
+
+
+@pytest.mark.parametrize(
+    "make_layer",
+    [
+        lambda: ph.Conv2d(C, 4, kernel_size=2, stride=2),
+        lambda: ph.MaxPool2d(2, 2),
+        lambda: ph.AvgPool2d(2, 3),
+        lambda: ph.Conv3d(C, 4, kernel_size=(1, 1), stride=(1, 2)),
+    ],
+    ids=["conv2d", "maxpool2d", "avgpool2d", "conv3d"],
+)
+@pytest.mark.parametrize(
+    "first, second", [((9, 9), (12, 14)), ((12, 14), (9, 9)), ((7, 8), (7, 9))]
+)
+def test_strided_layer_reused_on_another_grid_size(make_layer, first, second):
+    """The strided path used to compute its slices/pads on the first call only,
+    so the same layer then crashed (or misindexed) on another grid size. The
+    reused layer must match a fresh copy that only ever saw the second size."""
+    torch.manual_seed(0)
+    layer = make_layer()
+    torch.manual_seed(0)
+    fresh = make_layer()
+    lead = (2, C, 3) if isinstance(layer, ph.Conv3d) else (2, C)
+    layer(torch.randn(*lead, *first))
+    x2 = torch.randn(*lead, *second)
+    torch.testing.assert_close(layer(x2), fresh(x2))
+
+
+# ---- argument checking ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("bad", [0, -1, 1.0, True, "1", None])
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda v: ph.Conv2d(1, 1, kernel_size=v),
+        lambda v: ph.Conv2d(1, 1, stride=v),
+        lambda v: ph.Conv3d(1, 1, kernel_size=v),
+        lambda v: ph.Conv3d(1, 1, stride=(1, v)),
+        lambda v: ph.MaxPool2d(kernel_size=v),
+        lambda v: ph.MaxPool2d(stride=v),
+        lambda v: ph.AvgPool2d(kernel_size=v),
+        lambda v: ph.AvgPool2d(stride=v),
+        lambda v: ph.MaxPool3d(kernel_size=(v, 1)),
+        lambda v: ph.MaxPool3d(stride=v),
+        lambda v: ph.Conv2d_CustomKernel(stride=v),
+        lambda v: ph.Conv3d_CustomKernel(stride=v),
+    ],
+)
+def test_bad_kernel_size_or_stride_is_rejected_when_built(build, bad):
+    """These used to be accepted and fail only at the first forward pass,
+    with an unrelated-looking error (ZeroDivisionError, TypeError...)."""
+    with pytest.raises(ValueError, match="kernel_size|stride"):
+        build(bad)
+
+
+@pytest.mark.parametrize("bad", [[1, 1], (1, 1, 1), (1,)])
+def test_3d_pair_must_be_a_2_tuple(bad):
+    with pytest.raises(ValueError, match="kernel_size"):
+        ph.Conv3d(1, 1, kernel_size=bad)
+
+
+@pytest.mark.parametrize("conv_cls", [ph.Conv2d, ph.Conv3d])
+def test_share_neighbors_false_and_none_mean_off(conv_cls):
+    """share_neighbors=False raised a ValueError in 0.2.3, although 0.2.2
+    documented it as still working."""
+    for value in (None, False):
+        conv = conv_cls(1, 1, 1, share_neighbors=value)
+        assert conv.share_neighbors is None
+        assert hasattr(conv, "kernel0") and not hasattr(conv, "shared_weights")
+
+
+@pytest.mark.parametrize("conv_cls", [ph.Conv2d, ph.Conv3d])
+def test_share_neighbors_true_means_ring(conv_cls):
+    """As in keras_hexagdly, where True is kept for older code."""
+    assert conv_cls(1, 1, 1, share_neighbors=True).share_neighbors == "ring"
+
+
+@pytest.mark.parametrize("bad", ["rings", 1, "RING"])
+def test_unknown_share_neighbors_mode_is_rejected(bad):
+    with pytest.raises(ValueError, match="share_neighbors"):
+        ph.Conv2d(1, 1, 1, share_neighbors=bad)

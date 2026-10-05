@@ -55,6 +55,47 @@ from torch.nn.parameter import Parameter
 SHARE_NEIGHBORS_MODES = ("ring", "diag", "sym")
 
 
+def _check_positive_int(name, value):
+    """Reject a non-positive or non-integer kernel_size/stride up front.
+
+    Without this, a bad value (0, negative, or a float) doesn't fail until the
+    first forward pass, with an error that depends on where in the sub-kernel
+    decomposition it breaks (ZeroDivisionError, a TypeError about lists...).
+    Upstream HexagDLy has the same gap. keras_hexagdly checks the same way.
+    """
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}.")
+
+
+def _check_positive_int_or_pair(name, value):
+    """Like _check_positive_int, but also accepts a (depth, hex) tuple, the
+    Conv3d/MaxPool3d convention."""
+    if isinstance(value, tuple):
+        if len(value) != 2:
+            raise ValueError(
+                f"{name} must be a positive integer or a (depth, hex) tuple, got {value!r}."
+            )
+        _check_positive_int(f"{name}[0]", value[0])
+        _check_positive_int(f"{name}[1]", value[1])
+    else:
+        _check_positive_int(name, value)
+
+
+def _normalize_share_neighbors(value):
+    """None/False -> None (off); True -> "ring", as in keras_hexagdly; a mode
+    string -> itself, validated."""
+    if value is None or value is False:
+        return None
+    if value is True:
+        return "ring"
+    if value in SHARE_NEIGHBORS_MODES:
+        return value
+    raise ValueError(
+        f"share_neighbors must be None, False, True or one of {SHARE_NEIGHBORS_MODES}, "
+        f"got {value!r}"
+    )
+
+
 def _check_padding(padding):
     """Validate the ``padding`` argument of the 2D layers and return it.
 
@@ -117,7 +158,7 @@ class HexBase:
         self.depth_size = None
         self.hexbase_stride = None
         self.depth_stride = None
-        self.input_size_is_known = False
+        self._plan_shape = None
         self.odd_columns_slices = []
         self.odd_columns_pads = []
         self.even_columns_slices = []
@@ -242,18 +283,27 @@ class HexBase:
         # it does in upstream HexagDLy), so it is skipped.
         has_even_columns = input.size(-1) > self.hexbase_stride
 
-        for i in range(self.hexbase_size + 1):
-            dilation_base = (1, 1) if i == 0 else (1, 2 * i)
-
-            if not self.input_size_is_known:
+        # The per-sub-kernel slices/pads depend on the grid's height and width,
+        # so they are recomputed whenever those change, not only on the first
+        # call: reusing them for another size crashes or misindexes. (getattr:
+        # layers pickled by an older version don't have _plan_shape yet.)
+        plan_shape = tuple(input.shape[-2:])
+        if plan_shape != getattr(self, "_plan_shape", None):
+            self.odd_columns_slices = []
+            self.odd_columns_pads = []
+            self.even_columns_slices = []
+            self.even_columns_pads = []
+            for i in range(self.hexbase_size + 1):
                 slices, pads = self.shape_for_odd_columns(input.size(), i)
                 self.odd_columns_slices.append(slices)
                 self.odd_columns_pads.append(pads)
                 slices, pads = self.shape_for_even_columns(input.size(), i)
                 self.even_columns_slices.append(slices)
                 self.even_columns_pads.append(pads)
-                if i == self.hexbase_size:
-                    self.input_size_is_known = True
+            self._plan_shape = plan_shape
+
+        for i in range(self.hexbase_size + 1):
+            dilation_base = (1, 1) if i == 0 else (1, 2 * i)
 
             # odd_columns stream: centres land on odd output columns → even-col kernel map
             ki_odd_stream = getattr(self, "kernel" + str(i))
@@ -745,11 +795,9 @@ class Conv2d(HexBase, nn.Module):
         padding="same",
     ):
         super(Conv2d, self).__init__()
-        if share_neighbors is not None and share_neighbors not in SHARE_NEIGHBORS_MODES:
-            raise ValueError(
-                f"share_neighbors must be False or one of {SHARE_NEIGHBORS_MODES}, "
-                f"got {share_neighbors!r}"
-            )
+        _check_positive_int("kernel_size", kernel_size)
+        _check_positive_int("stride", stride)
+        share_neighbors = _normalize_share_neighbors(share_neighbors)
         self.padding = _check_padding(padding)
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -908,6 +956,7 @@ class Conv2d_CustomKernel(HexBase, nn.Module):
 
     def __init__(self, sub_kernels=[], stride=1, bias=None, requires_grad=False, debug=False):
         super(Conv2d_CustomKernel, self).__init__()
+        _check_positive_int("stride", stride)
         self.sub_kernels = sub_kernels
         self.bias_array = bias
         self.hexbase_stride = stride
@@ -1063,11 +1112,9 @@ class Conv3d(HexBase, nn.Module):
         super(Conv3d, self).__init__()
         if depth_padding not in ("valid", "same"):
             raise ValueError("depth_padding must be 'valid' or 'same'.")
-        if share_neighbors is not None and share_neighbors not in SHARE_NEIGHBORS_MODES:
-            raise ValueError(
-                f"share_neighbors must be False or one of {SHARE_NEIGHBORS_MODES}, "
-                f"got {share_neighbors!r}"
-            )
+        _check_positive_int_or_pair("kernel_size", kernel_size)
+        _check_positive_int_or_pair("stride", stride)
+        share_neighbors = _normalize_share_neighbors(share_neighbors)
         self.depth_padding = depth_padding
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -1246,6 +1293,7 @@ class Conv3d_CustomKernel(HexBase, nn.Module):
 
     def __init__(self, sub_kernels=[], stride=1, bias=None, requires_grad=False, debug=False):
         super(Conv3d_CustomKernel, self).__init__()
+        _check_positive_int_or_pair("stride", stride)
         self.sub_kernels = sub_kernels
         self.bias_array = bias
         if isinstance(stride, int):
@@ -1393,6 +1441,8 @@ class MaxPool2d(HexBase, nn.Module):
 
     def __init__(self, kernel_size=1, stride=1, padding="same"):
         super(MaxPool2d, self).__init__()
+        _check_positive_int("kernel_size", kernel_size)
+        _check_positive_int("stride", stride)
         self.padding = _check_padding(padding)
         self.hexbase_size = kernel_size
         self.hexbase_stride = stride
@@ -1459,6 +1509,8 @@ class AvgPool2d(HexBase, nn.Module):
 
     def __init__(self, kernel_size=1, stride=1, padding="same"):
         super(AvgPool2d, self).__init__()
+        _check_positive_int("kernel_size", kernel_size)
+        _check_positive_int("stride", stride)
         self.padding = _check_padding(padding)
         self.hexbase_size = kernel_size
         self.hexbase_stride = stride
@@ -1518,6 +1570,8 @@ class MaxPool3d(HexBase, nn.Module):
 
     def __init__(self, kernel_size=1, stride=1):
         super(MaxPool3d, self).__init__()
+        _check_positive_int_or_pair("kernel_size", kernel_size)
+        _check_positive_int_or_pair("stride", stride)
         if isinstance(kernel_size, int):
             self.hexbase_size = kernel_size
             self.depth_size = kernel_size
