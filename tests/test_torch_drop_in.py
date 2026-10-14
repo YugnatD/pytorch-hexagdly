@@ -4,10 +4,11 @@ Conv2d, MaxPool2d and AvgPool2d accept ``padding`` like ``torch.nn.Conv2d`` /
 ``MaxPool2d`` / ``AvgPool2d``, so a model can pick either family of layers and
 build them from one set of keyword arguments. Also covers grids no wider
 than the stride, saving models with torch.save, reusing a layer on another
-grid size, and argument checking. See CHANGELOG.md [0.3.0].
+grid size, and argument checking. See CHANGELOG.md [0.3.0] and [0.4.0].
 
-AvgPool2d's values are checked against the oracle mean in hexagdly-oracle's
-tests/test_avgpool2d.py; the checks here need no oracle.
+AvgPool2d's values, and the pointwise (kernel_size=0) and kernel_size_unit
+cross-framework checks, are checked against the oracle in hexagdly-oracle's
+tests/test_layers.py; the checks here need no oracle.
 """
 
 import numpy as np
@@ -268,7 +269,7 @@ def test_strided_layer_reused_on_another_grid_size(make_layer, first, second):
 # ---- argument checking ----------------------------------------------------------
 
 
-@pytest.mark.parametrize("bad", [0, -1, 1.0, True, "1", None])
+@pytest.mark.parametrize("bad", [-1, 1.0, True, "1", None])
 @pytest.mark.parametrize(
     "build",
     [
@@ -288,9 +289,55 @@ def test_strided_layer_reused_on_another_grid_size(make_layer, first, second):
 )
 def test_bad_kernel_size_or_stride_is_rejected_when_built(build, bad):
     """These used to be accepted and fail only at the first forward pass,
-    with an unrelated-looking error (ZeroDivisionError, TypeError...)."""
+    with an unrelated-looking error (ZeroDivisionError, TypeError...). 0 is
+    parametrized separately below, since it is a bad stride but a legitimate
+    (pointwise) kernel_size for some of these."""
     with pytest.raises(ValueError, match="kernel_size|stride"):
         build(bad)
+
+
+@pytest.mark.parametrize(
+    "build, zero_is_valid",
+    [
+        (lambda v: ph.Conv2d(1, 1, kernel_size=v), True),
+        (lambda v: ph.Conv2d(1, 1, stride=v), False),
+        (lambda v: ph.Conv3d(1, 1, kernel_size=v), False),  # bare int also sets depth
+        (lambda v: ph.Conv3d(1, 1, kernel_size=(1, v)), True),  # only the hex element
+        (lambda v: ph.Conv3d(1, 1, stride=(1, v)), False),
+        (lambda v: ph.MaxPool2d(kernel_size=v), True),
+        (lambda v: ph.MaxPool2d(stride=v), False),
+        (lambda v: ph.AvgPool2d(kernel_size=v), True),
+        (lambda v: ph.AvgPool2d(stride=v), False),
+        (lambda v: ph.MaxPool3d(kernel_size=(v, 1)), False),  # (v, 1): v is depth here
+        (lambda v: ph.MaxPool3d(kernel_size=(1, v)), True),  # (1, v): v is the hex element
+        (lambda v: ph.MaxPool3d(stride=v), False),
+    ],
+    ids=[
+        "conv2d-kernel_size",
+        "conv2d-stride",
+        "conv3d-bare-int-kernel_size",
+        "conv3d-hex-kernel_size",
+        "conv3d-stride",
+        "maxpool2d-kernel_size",
+        "maxpool2d-stride",
+        "avgpool2d-kernel_size",
+        "avgpool2d-stride",
+        "maxpool3d-depth-kernel_size",
+        "maxpool3d-hex-kernel_size",
+        "maxpool3d-stride",
+    ],
+)
+def test_zero_is_valid_only_for_a_2d_or_hex_kernel_size(build, zero_is_valid):
+    """0 is the pointwise case (0 hexagonal rings, a plain per-cell
+    projection) for a 2D kernel_size/pool_size, or for the hex element of a
+    3D one -- but 0 is still a bad stride everywhere, and a bare-int Conv3d/
+    MaxPool3d kernel_size of 0 would also zero the depth axis, which is
+    degenerate (no time frames at all)."""
+    if zero_is_valid:
+        build(0)
+    else:
+        with pytest.raises(ValueError, match="kernel_size|stride"):
+            build(0)
 
 
 @pytest.mark.parametrize("bad", [[1, 1], (1, 1, 1), (1,)])
@@ -319,3 +366,177 @@ def test_share_neighbors_true_means_ring(conv_cls):
 def test_unknown_share_neighbors_mode_is_rejected(bad):
     with pytest.raises(ValueError, match="share_neighbors"):
         ph.Conv2d(1, 1, 1, share_neighbors=bad)
+
+
+# ---- pointwise (kernel_size=0) -------------------------------------------------
+#
+# 0 rings is a plain per-cell channel projection: no neighbours at all. See
+# CHANGELOG.md [0.4.0] and https://github.com/ctlearn-project/ctlearn/issues/302.
+
+
+def test_conv2d_pointwise_matches_a_plain_dense_projection(x):
+    """No neighbour mixing at all, independent of debug mode: every output
+    cell is exactly that same cell's input vector times the (1x1) kernel,
+    plus bias -- a manual per-pixel matmul, not run through the hex
+    machinery at all."""
+    layer = ph.Conv2d(C, 5, kernel_size=0)
+    out = layer(x)
+    weight = layer.kernel0[:, :, 0, 0]  # (out, in), squeezed from (out, in, 1, 1)
+    bias = layer.bias_tensor
+    expected = torch.einsum("nchw,oc->nohw", x, weight) + bias.view(1, -1, 1, 1)
+    torch.testing.assert_close(out, expected, atol=1e-5, rtol=1e-5)
+
+
+def test_conv2d_pointwise_has_no_border_effect():
+    """Unlike kernel_size>=1, a pointwise conv pads nothing, so debug weights
+    (all 1s) give the exact channel sum at every cell, borders included --
+    kernel_size>=1 would undercount at the border, where some neighbours
+    fall outside the grid."""
+    image = torch.randn(1, C, H, W)
+    out = ph.Conv2d(C, 1, kernel_size=0, debug=True)(image)[:, 0]
+    torch.testing.assert_close(out, image.sum(dim=1) + 1.0, atol=1e-5, rtol=1e-5)
+
+
+@pytest.mark.parametrize("stride", [1, 2, 3])
+def test_conv2d_pointwise_strided_output_is_a_subset_of_the_input(stride):
+    """A strided pointwise conv only ever subsamples: debug weights (all 1s,
+    no bias) make every output value the channel sum of some single input
+    cell, never a combination of several -- which a non-pointwise kernel, or
+    a genuine spatial mixing bug, would produce instead."""
+    image = torch.randn(1, C, H, W)
+    out = ph.Conv2d(C, 1, kernel_size=0, stride=stride, bias=False, debug=True)(image)
+    possible_sums = image.sum(dim=1)
+    for value in out.flatten():
+        assert torch.any(torch.isclose(possible_sums, value, atol=1e-5))
+
+
+def test_maxpool2d_kernel_size_zero_is_the_identity_at_stride_one(x):
+    """A single-cell window: the max of one element is that element."""
+    torch.testing.assert_close(ph.MaxPool2d(0)(x), x)
+
+
+@pytest.mark.parametrize("stride", [1, 2, 3])
+def test_avgpool2d_kernel_size_zero_is_the_identity(x, stride):
+    """A single-cell window: the mean of one element is that element,
+    whatever the stride."""
+    out = ph.AvgPool2d(0, stride=stride)(x)
+    sampled = ph.MaxPool2d(0, stride=stride)(x)  # same window walk, exact subsample
+    torch.testing.assert_close(out, sampled, atol=1e-5, rtol=1e-5)
+
+
+def test_conv3d_pointwise_hex_element_only_affects_the_hex_plane():
+    """kernel_size=(depth, 0): the hex plane is pointwise (no neighbour
+    mixing), but the depth/time axis is untouched -- it still convolves
+    across its 5 frames exactly as it would with a non-zero hex radius."""
+    x3 = torch.randn(1, C, 5, H, W)
+    layer = ph.Conv3d(C, 4, kernel_size=(5, 0))
+    out = layer(x3)
+    assert out.shape == (1, 4, 1, H, W)  # depth_padding="valid": 5 - 5 + 1 = 1
+    assert torch.isfinite(out).all()
+
+
+# ---- kernel_size_unit="pixels" --------------------------------------------------
+#
+# "pixels" reads kernel_size as a square-kernel width (radius = size // 2),
+# so the same architecture means a comparable receptive field on both grids.
+# "rings" (the default) is unchanged: kernel_size already is the ring count.
+
+
+def test_kernel_size_unit_defaults_to_rings():
+    assert ph.Conv2d(C, 4, kernel_size=1).kernel_size_unit == "rings"
+    assert ph.MaxPool2d(1).kernel_size_unit == "rings"
+
+
+def test_kernel_size_unit_rejects_an_unknown_value():
+    with pytest.raises(ValueError, match="kernel_size_unit"):
+        ph.Conv2d(C, 4, kernel_size=1, kernel_size_unit="bogus")
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda k, unit: ph.Conv2d(C, 4, kernel_size=k, kernel_size_unit=unit),
+        lambda k, unit: ph.MaxPool2d(k, kernel_size_unit=unit),
+        lambda k, unit: ph.AvgPool2d(k, kernel_size_unit=unit),
+    ],
+    ids=["conv2d", "maxpool2d", "avgpool2d"],
+)
+@pytest.mark.parametrize("pixels, rings", [(1, 0), (3, 1), (5, 2), (7, 3)])
+def test_pixels_unit_resolves_to_the_matching_ring_count(build, pixels, rings):
+    assert build(pixels, "pixels").hexbase_size == rings
+
+
+@pytest.mark.parametrize("pixels", [2, 3])
+def test_pixels_unit_even_width_floors_like_the_odd_width_below_it(x, pixels):
+    """pool_size=2 is CTLearn's default; there is no exact hex equivalent for
+    an even width, so it floors to the same ring count as 2 - 1 = 1, rather
+    than being rejected."""
+    torch.manual_seed(0)
+    a = ph.Conv2d(C, 4, kernel_size=1)  # 1 ring directly
+    out_a = a(x)
+    torch.manual_seed(0)
+    b = ph.Conv2d(C, 4, kernel_size=pixels, kernel_size_unit="pixels")  # floors to 1 ring too
+    out_b = b(x)
+    torch.testing.assert_close(out_a, out_b, atol=1e-6, rtol=1e-6)
+
+
+def test_pixels_unit_gives_bit_identical_output_to_the_matching_rings_call(x):
+    """The whole point of the option: build the SAME layer either way, with
+    identical weight initialization (same seed) and identical output -- not
+    just a matching hexbase_size."""
+    for size in (1, 2, 3):
+        torch.manual_seed(1)
+        rings = ph.Conv2d(C, 4, kernel_size=size)
+        out_rings = rings(x)
+        torch.manual_seed(1)
+        pixels = ph.Conv2d(C, 4, kernel_size=2 * size + 1, kernel_size_unit="pixels")
+        out_pixels = pixels(x)
+        torch.testing.assert_close(out_rings, out_pixels, atol=1e-6, rtol=1e-6)
+
+
+def test_conv3d_kernel_size_unit_leaves_the_depth_element_alone():
+    """Only the hex element follows kernel_size_unit; depth is never a hex
+    radius, so it always stays the literal value."""
+    layer = ph.Conv3d(C, 4, kernel_size=(5, 3), kernel_size_unit="pixels")
+    assert layer.depth_size == 5  # unaffected by the unit
+    assert layer.hexbase_size == 1  # 3 pixels -> 1 ring
+
+
+def test_conv3d_pixels_unit_gives_bit_identical_output_to_the_matching_rings_call():
+    """Same idea as test_pixels_unit_gives_bit_identical_output_to_the_matching_
+    rings_call, but for Conv3d, where the hex element shares the tuple with a
+    non-trivial depth -- the equivalence has to hold with depth left alone."""
+    x3 = torch.randn(2, C, 5, H, W)
+    torch.manual_seed(8)
+    rings = ph.Conv3d(C, 4, kernel_size=(3, 1))
+    out_rings = rings(x3)
+    torch.manual_seed(8)
+    pixels = ph.Conv3d(C, 4, kernel_size=(3, 3), kernel_size_unit="pixels")  # 3 pixels -> 1 ring
+    out_pixels = pixels(x3)
+    torch.testing.assert_close(out_rings, out_pixels, atol=1e-6, rtol=1e-6)
+
+
+def test_maxpool3d_pixels_unit_matches_the_matching_rings_call():
+    """MaxPool3d has no weights, so this is an output-only equivalence (no
+    seeding needed), but it is the only check that the pixels-unit hex
+    radius is actually threaded through MaxPool3d's own window geometry."""
+    x3 = torch.randn(2, C, 5, H, W)
+    rings = ph.MaxPool3d(kernel_size=(3, 1))
+    pixels = ph.MaxPool3d(kernel_size=(3, 3), kernel_size_unit="pixels")
+    torch.testing.assert_close(rings(x3), pixels(x3), atol=1e-6, rtol=1e-6)
+
+
+def test_kernel_size_unit_survives_pickling(x, tmp_path):
+    """torch.save pickles plain attributes along with the module, so
+    kernel_size_unit (and the resolved hexbase_size) come back unchanged."""
+    torch.manual_seed(2)
+    layer = ph.Conv2d(C, 4, kernel_size=3, kernel_size_unit="pixels")
+    ref = layer(x)
+
+    path = tmp_path / "layer.pt"
+    torch.save(layer, path)
+    restored = torch.load(path, weights_only=False)
+
+    assert restored.kernel_size_unit == "pixels"
+    assert restored.hexbase_size == 1
+    torch.testing.assert_close(restored(x), ref)

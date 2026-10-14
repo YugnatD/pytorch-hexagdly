@@ -81,6 +81,73 @@ def _check_positive_int_or_pair(name, value):
         _check_positive_int(name, value)
 
 
+def _check_nonnegative_int(name, value):
+    """Like _check_positive_int, but also accepts 0.
+
+    kernel_size/pool_size=0 is the pointwise case: a plain per-cell channel
+    projection, no neighbours at all (0 hexagonal rings). strides must stay
+    strictly positive, so this is only used for kernel_size/pool_size.
+    """
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{name} must be a non-negative integer, got {value!r}.")
+
+
+_KERNEL_SIZE_UNITS = ("rings", "pixels")
+
+
+def _check_kernel_size_unit(value):
+    """Validate ``kernel_size_unit`` and return it.
+
+    "rings" (default): kernel_size already is the hexagonal ring count --
+    the number of hexagonal rings of neighbours around the centre cell, this
+    port's and upstream HexagDLy's long-standing convention.
+
+    "pixels": kernel_size is read as a square-kernel width instead, as in
+    indexedconv's MaskedConv2d, so the same value means a comparable extent
+    on both grids. See _hex_radius for the conversion.
+    """
+    if value not in _KERNEL_SIZE_UNITS:
+        raise ValueError(f"kernel_size_unit must be one of {_KERNEL_SIZE_UNITS}, got {value!r}.")
+    return value
+
+
+def _hex_radius(kernel_size, kernel_size_unit):
+    """Convert a user-facing kernel_size to the ring count (hexbase_size)
+    the hex machinery uses internally.
+
+    unit="rings": kernel_size already is the ring count, unchanged.
+    unit="pixels": kernel_size is a square-kernel width, radius = size // 2 --
+    so 1 is pointwise (0 rings, a plain per-cell projection), 3 is the 7-cell
+    hexagon (1 ring), 5 the 19-cell one (2 rings), matching a 3x3/5x5 square
+    kernel's extent. Even widths have no exact hex equivalent; they still
+    resolve (floored), matching e.g. a default pool_size=2 to 1 ring rather
+    than rejecting it.
+    """
+    return kernel_size if kernel_size_unit == "rings" else kernel_size // 2
+
+
+def _check_depth_hex_kernel_size(name, value):
+    """Validate the Conv3d/MaxPool3d ``kernel_size`` convention and return
+    ``(depth, hex)``.
+
+    A bare int sets both axes to the same value and must stay positive --
+    there is no way to decouple them, and a 0-depth kernel is degenerate (no
+    time frames at all), so a bare 0 is rejected even though 0 rings is
+    otherwise valid. A tuple sets the axes independently: the depth element
+    must still be positive, but the hex element can be 0 (pointwise, e.g.
+    ``(3, 0)``), using _hex_radius like the 2D layers.
+    """
+    if isinstance(value, int):
+        _check_positive_int(name, value)
+        return value, value
+    if isinstance(value, tuple) and len(value) == 2:
+        depth, hexp = value
+        _check_positive_int(f"{name}[0]", depth)
+        _check_nonnegative_int(f"{name}[1]", hexp)
+        return depth, hexp
+    raise ValueError(f"{name} must be a positive integer or a (depth, hex) tuple, got {value!r}.")
+
+
 def _normalize_share_neighbors(value):
     """None/False -> None (off); True -> "ring", as in keras_hexagdly; a mode
     string -> itself, validated."""
@@ -394,6 +461,13 @@ class HexBase:
             stride=(1, 1) if self.dimensions == 2 else (self.depth_stride, 1, 1),
             **self.kwargs,
         )
+        # hexbase_size=0 (pointwise, no neighbours at all) has no kernel1+, so
+        # kernel0 alone -- already a full-resolution per-cell op, no odd/even
+        # column split needed -- is the entire output. Returning early avoids
+        # falling into the concatenation below with the odd_kernels_* lists
+        # still empty.
+        if self.hexbase_size == 0:
+            return even_kernels_all_columns
         if self.hexbase_size >= 1:
             # odd-column centres use kernel1 (even-col map);
             # even-column centres use _odd_col_kernel(1) (odd-col map).
@@ -774,6 +848,13 @@ class Conv2d(HexBase, nn.Module):
                                  accepted for torch.nn.Conv2d compatibility.
                                  The hex grid is always padded the same way,
                                  whatever the value; 'valid' raises.
+        kernel_size_unit:   str: 'rings' (default) or 'pixels'. 'rings' reads
+                                 kernel_size as the hexagonal ring count, as
+                                 above. 'pixels' reads it as a square-kernel
+                                 width instead -- radius = kernel_size // 2 --
+                                 so 0 (pointwise, no neighbours) is 'rings'
+                                 kernel_size=0, 1 is 'pixels' kernel_size=1,
+                                 and 1 ring is 'pixels' kernel_size=3.
 
     Examples::
 
@@ -793,15 +874,18 @@ class Conv2d(HexBase, nn.Module):
         debug=False,
         share_neighbors=None,
         padding="same",
+        kernel_size_unit="rings",
     ):
         super(Conv2d, self).__init__()
-        _check_positive_int("kernel_size", kernel_size)
+        _check_nonnegative_int("kernel_size", kernel_size)
         _check_positive_int("stride", stride)
         share_neighbors = _normalize_share_neighbors(share_neighbors)
         self.padding = _check_padding(padding)
         self.in_channels = in_channels
         self.out_channels = out_channels
-        self.hexbase_size = kernel_size
+        self.kernel_size = kernel_size
+        self.kernel_size_unit = _check_kernel_size_unit(kernel_size_unit)
+        self.hexbase_size = _hex_radius(kernel_size, self.kernel_size_unit)
         self.hexbase_stride = stride
         self.debug = debug
         self.bias = bias
@@ -1089,6 +1173,9 @@ class Conv3d(HexBase, nn.Module):
                                 "sym":   adjacent 60° pairs share a weight.
         depth_padding:      str: 'valid' (default) or 'same' — 'same' zero-pads
                                  the depth axis so output depth equals input depth
+        kernel_size_unit:   str: 'rings' (default) or 'pixels', like Conv2d --
+                                 only the hex element of kernel_size follows
+                                 it; depth is never a hex radius.
 
     Examples::
 
@@ -1108,23 +1195,21 @@ class Conv3d(HexBase, nn.Module):
         debug=False,
         share_neighbors=None,
         depth_padding="valid",
+        kernel_size_unit="rings",
     ):
         super(Conv3d, self).__init__()
         if depth_padding not in ("valid", "same"):
             raise ValueError("depth_padding must be 'valid' or 'same'.")
-        _check_positive_int_or_pair("kernel_size", kernel_size)
+        depth_size, hex_kernel_size = _check_depth_hex_kernel_size("kernel_size", kernel_size)
         _check_positive_int_or_pair("stride", stride)
         share_neighbors = _normalize_share_neighbors(share_neighbors)
         self.depth_padding = depth_padding
         self.in_channels = in_channels
         self.out_channels = out_channels
-        if isinstance(kernel_size, int):
-            self.hexbase_size = kernel_size
-            self.depth_size = kernel_size
-        elif isinstance(kernel_size, tuple):
-            assert len(kernel_size) == 2, "Need a tuple of two ints to set kernel size"
-            self.hexbase_size = kernel_size[1]
-            self.depth_size = kernel_size[0]
+        self.kernel_size = kernel_size
+        self.kernel_size_unit = _check_kernel_size_unit(kernel_size_unit)
+        self.depth_size = depth_size
+        self.hexbase_size = _hex_radius(hex_kernel_size, self.kernel_size_unit)
         if isinstance(stride, int):
             self.hexbase_stride = stride
             self.depth_stride = stride
@@ -1430,6 +1515,7 @@ class MaxPool2d(HexBase, nn.Module):
                                  accepted for torch.nn.MaxPool2d compatibility.
                                  The hex grid is always padded the same way,
                                  whatever the value; 'valid' raises.
+        kernel_size_unit:   str: 'rings' (default) or 'pixels', like Conv2d.
 
     Examples::
 
@@ -1439,12 +1525,14 @@ class MaxPool2d(HexBase, nn.Module):
         >>> print(output)
     """
 
-    def __init__(self, kernel_size=1, stride=1, padding="same"):
+    def __init__(self, kernel_size=1, stride=1, padding="same", kernel_size_unit="rings"):
         super(MaxPool2d, self).__init__()
-        _check_positive_int("kernel_size", kernel_size)
+        _check_nonnegative_int("kernel_size", kernel_size)
         _check_positive_int("stride", stride)
         self.padding = _check_padding(padding)
-        self.hexbase_size = kernel_size
+        self.kernel_size = kernel_size
+        self.kernel_size_unit = _check_kernel_size_unit(kernel_size_unit)
+        self.hexbase_size = _hex_radius(kernel_size, self.kernel_size_unit)
         self.hexbase_stride = stride
         self.dimensions = 2
         self.process = _max_pool2d
@@ -1498,6 +1586,7 @@ class AvgPool2d(HexBase, nn.Module):
                                  accepted for torch.nn.AvgPool2d compatibility.
                                  The hex grid is always padded the same way,
                                  whatever the value; 'valid' raises.
+        kernel_size_unit:   str: 'rings' (default) or 'pixels', like Conv2d.
 
     Examples::
 
@@ -1507,12 +1596,14 @@ class AvgPool2d(HexBase, nn.Module):
         >>> print(output)
     """
 
-    def __init__(self, kernel_size=1, stride=1, padding="same"):
+    def __init__(self, kernel_size=1, stride=1, padding="same", kernel_size_unit="rings"):
         super(AvgPool2d, self).__init__()
-        _check_positive_int("kernel_size", kernel_size)
+        _check_nonnegative_int("kernel_size", kernel_size)
         _check_positive_int("stride", stride)
         self.padding = _check_padding(padding)
-        self.hexbase_size = kernel_size
+        self.kernel_size = kernel_size
+        self.kernel_size_unit = _check_kernel_size_unit(kernel_size_unit)
+        self.hexbase_size = _hex_radius(kernel_size, self.kernel_size_unit)
         self.hexbase_stride = stride
         self.dimensions = 2
         self.process = _sum_pool2d
@@ -1559,6 +1650,8 @@ class MaxPool3d(HexBase, nn.Module):
                                 tuple of two ints:
                                     1st int: length of strides in depth
                                     2nd int: length of strides in hexagonal base
+        kernel_size_unit:   str: 'rings' (default) or 'pixels', like Conv3d --
+                                 only the hex element follows it.
 
     Examples::
 
@@ -1568,17 +1661,14 @@ class MaxPool3d(HexBase, nn.Module):
         >>> print(output)
     """
 
-    def __init__(self, kernel_size=1, stride=1):
+    def __init__(self, kernel_size=1, stride=1, kernel_size_unit="rings"):
         super(MaxPool3d, self).__init__()
-        _check_positive_int_or_pair("kernel_size", kernel_size)
+        depth_size, hex_kernel_size = _check_depth_hex_kernel_size("kernel_size", kernel_size)
         _check_positive_int_or_pair("stride", stride)
-        if isinstance(kernel_size, int):
-            self.hexbase_size = kernel_size
-            self.depth_size = kernel_size
-        elif isinstance(kernel_size, tuple):
-            assert len(kernel_size) == 2, "Too many parameters"
-            self.hexbase_size = kernel_size[1]
-            self.depth_size = kernel_size[0]
+        self.kernel_size = kernel_size
+        self.kernel_size_unit = _check_kernel_size_unit(kernel_size_unit)
+        self.depth_size = depth_size
+        self.hexbase_size = _hex_radius(hex_kernel_size, self.kernel_size_unit)
         if isinstance(stride, int):
             self.hexbase_stride = stride
             self.depth_stride = stride

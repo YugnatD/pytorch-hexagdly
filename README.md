@@ -3,9 +3,10 @@
 `pytorch-hexagdly` is a fork of [HexagDLy](https://github.com/ai4iacts/hexagdly)
 that extends the original hexagonal convolution and pooling layers for PyTorch with
 **ring-shared weights** (`share_neighbors`), **depth-axis same-padding**
-(`depth_padding="same"` on `Conv3d`), **hexagonal average pooling** (`AvgPool2d`), and
-`torch.nn`-compatible arguments, so the hex layers can replace `nn.Conv2d` / `nn.MaxPool2d` /
-`nn.AvgPool2d` in an existing model.
+(`depth_padding="same"` on `Conv3d`), **hexagonal average pooling** (`AvgPool2d`), an
+**alternative kernel-size convention** (`kernel_size_unit`) that reads `kernel_size` as a
+square-kernel width instead of a ring count, and `torch.nn`-compatible arguments, so the
+hex layers can replace `nn.Conv2d` / `nn.MaxPool2d` / `nn.AvgPool2d` in an existing model.
 
 - [Getting Started](#getting-started)
 - [New Features](#new-features)
@@ -118,8 +119,34 @@ x = Pool(kernel_size=2, stride=2, padding=0)(x)
 
 The hex grid is always padded so that every cell is a window centre, whatever the
 `padding` value: `"same"` (the default) and integer paddings are accepted and change
-nothing, and `"valid"` raises. Note that `kernel_size` counts hexagonal rings, not
-pixels: `kernel_size=1` is a cell and its 6 neighbours.
+nothing, and `"valid"` raises. Note that `kernel_size` counts hexagonal rings by
+default, not pixels: `kernel_size=1` is a cell and its 6 neighbours -- see
+`kernel_size_unit` below for the alternative.
+
+### `kernel_size_unit` — reading `kernel_size` as a square-kernel width
+
+`kernel_size` counts hexagonal rings by default (`kernel_size_unit="rings"`):
+`kernel_size=1` is the 7-cell hexagon (a cell and its six neighbours), `kernel_size=2`
+the 19-cell one. The same number therefore means a much larger kernel than on a square
+grid, where `kernel_size=3` is 9 cells.
+
+`kernel_size_unit="pixels"` reads `kernel_size` as a square-kernel width instead --
+radius = `kernel_size // 2` -- so the same architecture means a comparable receptive
+field on both grids, as in [indexedconv](https://github.com/IndexedConv/IndexedConv)'s
+`MaskedConv2d`:
+
+```python
+pytorch_hexagdly.Conv2d(4, 32, kernel_size=3, kernel_size_unit="pixels")  # the 7-cell hexagon
+pytorch_hexagdly.Conv2d(4, 32, kernel_size=1, kernel_size_unit="pixels")  # a plain 1x1, no neighbours
+```
+
+`kernel_size=0` (0 rings, a plain per-cell channel projection with no neighbours) is
+what `kernel_size_unit="pixels"` needs to express a true 1x1, and is accepted directly
+in `"rings"` mode too. Even widths have no exact hex equivalent and floor to the ring
+count of the odd width below them (`kernel_size=2` in `"pixels"` mode resolves like
+`1`), rather than being rejected. Applies to `MaxPool2d`/`AvgPool2d` the same way; on
+`Conv3d`/`MaxPool3d`, only the hex element of the `(depth, hex)` size follows the unit,
+since depth is never a hex radius.
 
 
 ## How to use pytorch-hexagdly
